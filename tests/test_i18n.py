@@ -122,7 +122,7 @@ def test_exam_window_in_french(open_exam, questions, ui):
     assert t["progress"] == "0 / 40 répondues"
     assert re.search(r"Module : Gastro Date : \d\d/\d\d/\d{4} 40 QCM Durée : 1h30", t["head"]), t["head"]
     assert t["rules"].startswith("Consignes Cochez d'une croix") and "Exemple :" in t["rules"]
-    assert t["tools"] == ["Pointeur", "Surligner", "Stylo", "Gomme", "Annuler", "Effacer les dessins"]
+    assert t["tools"] == ["Pointeur", "Surligner", "Stylo", "Gomme", "Annuler", "Effacer les surlignages", "Effacer les dessins"]
     assert t["sheet"] == "Grille de réponses"
     assert t["comb"] == "Module"
 
@@ -146,7 +146,7 @@ def test_exam_window_in_english(open_exam, questions, ui):
     assert t["progress"] == "0 / 40 answered"
     assert re.search(r"Module: Gastro Date: \d{1,2} [A-Z][a-z]{2} \d{4} 40 MCQs Duration: 1h30", t["head"]), t["head"]
     assert t["rules"].startswith("Instructions Mark the correct answer(s)") and "Example:" in t["rules"]
-    assert t["tools"] == ["Pointer", "Highlight", "Pen", "Eraser", "Undo", "Clear drawings"]
+    assert t["tools"] == ["Pointer", "Highlight", "Pen", "Eraser", "Undo", "Clear highlights", "Clear drawings"]
     assert t["sheet"] == "Answer sheet"
 
 

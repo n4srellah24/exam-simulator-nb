@@ -201,7 +201,8 @@ class ExamWindow(QMainWindow):
         js_strings = json.dumps(i18n.strings(
             "source", "label_colon", "go_to_question", "submit_title", "submit_msg",
             "submit_ok", "submit_cancel", "grading", "clear_title", "clear_msg",
-            "clear_ok", "cancel"), ensure_ascii=False).replace("</", "<\\/")
+            "clear_ok", "clear_hl_title", "clear_hl_msg", "clear_hl_ok", "cancel"),
+            ensure_ascii=False).replace("</", "<\\/")
 
         def swatch(kind, color, label):
             return (f'<button class="sw sw-{color}" data-kind="{kind}" data-color="{color}" '
@@ -240,7 +241,8 @@ class ExamWindow(QMainWindow):
       </div>
       <div class="tgroup">
         <button class="tool" onclick="undo()" title="{t("tip_undo")}">{_ICONS["undo"]}<span>{t("tool_undo")}</span></button>
-        <button class="tool" onclick="clearDrawings()" title="{t("tip_clear")}">{_ICONS["clear"]}<span>{t("tool_clear")}</span></button>
+        <button class="tool" id="clear-hl-btn" onclick="clearHighlights()" title="{t("tip_clear_hl")}">{_ICONS["clear"]}<span>{t("tool_clear_hl")}</span></button>
+        <button class="tool" id="clear-ink-btn" onclick="clearDrawings()" title="{t("tip_clear")}">{_ICONS["clear"]}<span>{t("tool_clear")}</span></button>
       </div>
       <div class="tgroup zoom">
         <button class="tool tool-sq" onclick="zoomOut()" title="{t("zoom_out")}" aria-label="{t("zoom_out")}">{_ICONS["minus"]}</button>
@@ -266,6 +268,11 @@ class ExamWindow(QMainWindow):
     </div>
   </div>
   <div id="right-panel" class="desk">
+    <div id="sheet-zoom" class="tgroup" role="group" aria-label="{t("sheet_zoom")}">
+      <button class="tool tool-sq" id="sheet-zoom-out" onclick="sheetZoomOut()" title="{t("zoom_out")}" aria-label="{t("zoom_out")}">{_ICONS["minus"]}</button>
+      <button class="tool" id="sheet-zoom-pct" onclick="resetSheetZoom()" title="{t("zoom_reset")}">100%</button>
+      <button class="tool tool-sq" id="sheet-zoom-in" onclick="sheetZoomIn()" title="{t("zoom_in")}" aria-label="{t("zoom_in")}">{_ICONS["plus"]}</button>
+    </div>
     <section id="sheet" class="paper" aria-label="{t("answer_sheet")}">
       <div class="sheet-head">
         <div class="sheet-fields">
@@ -500,7 +507,8 @@ _TOOLS_JS = r"""
 let tool = "pointer", hlColor = "yellow", penColor = "blue";
 let highlights = [], strokes = [], undoStack = [], nextId = 1;
 const ZOOMS = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
-let zoomIdx = 3;
+let zoomIdx = 3, sheetZoomIdx = 3;
+let hoverPane = "booklet";   // which side Ctrl +/− zooms
 
 const booklet = () => document.getElementById("booklet");
 const layer   = () => document.getElementById("ink-layer");
@@ -680,6 +688,16 @@ function onInkUp() {
   undoStack.push(() => removeStroke(s));
 }
 
+async function clearHighlights() {
+  if (!highlights.length) return;
+  const ok = await showModal(T.clear_hl_title, T.clear_hl_msg, T.clear_hl_ok, T.cancel);
+  if (!ok) return;
+  const removed = highlights.slice();
+  highlights = [];
+  repaint(removed);
+  undoStack.push(() => { highlights.push(...removed); repaint(removed); });
+}
+
 async function clearDrawings() {
   if (!strokes.length) return;
   const ok = await showModal(T.clear_title, T.clear_msg, T.clear_ok, T.cancel);
@@ -699,7 +717,6 @@ function applyZoom() {
   const sizer = document.getElementById("booklet-sizer");
   sizer.style.width  = (bk.offsetWidth * z) + "px";
   sizer.style.height = (bk.offsetHeight * z) + "px";
-  document.getElementById("sheet").style.zoom = Math.min(z, 1.5);
   document.getElementById("zoom-pct").textContent = Math.round(z * 100) + "%";
   panel.scrollTop = ratio * panel.scrollHeight;
 }
@@ -707,15 +724,26 @@ function zoomIn()    { zoomIdx = Math.min(zoomIdx + 1, ZOOMS.length - 1); applyZ
 function zoomOut()   { zoomIdx = Math.max(zoomIdx - 1, 0); applyZoom(); }
 function resetZoom() { zoomIdx = 3; applyZoom(); }
 
+/* The answer sheet zooms on its own, from its own buttons */
+function applySheetZoom() {
+  const z = ZOOMS[sheetZoomIdx];
+  document.getElementById("sheet").style.zoom = z;
+  document.getElementById("sheet-zoom-pct").textContent = Math.round(z * 100) + "%";
+}
+function sheetZoomIn()    { sheetZoomIdx = Math.min(sheetZoomIdx + 1, ZOOMS.length - 1); applySheetZoom(); }
+function sheetZoomOut()   { sheetZoomIdx = Math.max(sheetZoomIdx - 1, 0); applySheetZoom(); }
+function resetSheetZoom() { sheetZoomIdx = 3; applySheetZoom(); }
+
 function onKey(e) {
   if (modalOpen()) { if (e.key === "Escape") modalCancel(); return; }
   if (e.target.closest("input, textarea, select")) return;
   if (e.ctrlKey || e.metaKey) {
     const k = e.key.toLowerCase();
+    const sheet = hoverPane === "sheet";
     if (k === "z")                  { e.preventDefault(); undo(); }
-    else if (k === "+" || k === "=") { e.preventDefault(); zoomIn(); }
-    else if (k === "-")             { e.preventDefault(); zoomOut(); }
-    else if (k === "0")             { e.preventDefault(); resetZoom(); }
+    else if (k === "+" || k === "=") { e.preventDefault(); sheet ? sheetZoomIn() : zoomIn(); }
+    else if (k === "-")             { e.preventDefault(); sheet ? sheetZoomOut() : zoomOut(); }
+    else if (k === "0")             { e.preventDefault(); sheet ? resetSheetZoom() : resetZoom(); }
     return;
   }
   if (e.altKey) return;
@@ -736,8 +764,11 @@ function initTools() {
   ly.addEventListener("pointerup", onInkUp);
   ly.addEventListener("pointercancel", onInkUp);
   document.addEventListener("keydown", onKey);
+  document.getElementById("left-panel").addEventListener("mouseover", () => { hoverPane = "booklet"; });
+  document.getElementById("right-panel").addEventListener("mouseover", () => { hoverPane = "sheet"; });
   setTool("pointer", true);
   applyZoom();
+  applySheetZoom();
 }
 """
 
@@ -828,9 +859,15 @@ body[data-tool="eraser"] #ink-layer { cursor: cell; }
 /* A strip of desk and a rule always separate the sheet from the booklet,
    even when the zoomed booklet is wider than its panel. */
 #right-panel {
-  flex: 0 0 auto; overflow: auto; padding: 72px 22px 48px 24px;
+  flex: 0 0 auto; overflow: auto; padding: 0 22px 48px 24px;
   border-left: 1px solid #a9a69e;
 }
+#sheet-zoom {
+  position: sticky; top: 0; z-index: 10; justify-content: center;
+  margin: 0 -22px 20px -24px; padding: 10px 0; height: 53px;
+  background: var(--desk); border-bottom: 1px solid #bdbab2;
+}
+#sheet-zoom-pct { min-width: 58px; justify-content: center; font-variant-numeric: tabular-nums; }
 #sheet { width: 432px; padding: 22px 20px 36px; }
 .sheet-head { border-bottom: 1.5px solid var(--rule); padding-bottom: 12px; margin-bottom: 24px; }
 .sheet-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }

@@ -140,7 +140,7 @@ def test_zoom_magnifies_without_rewrapping(open_exam, questions):
     assert js(view, "document.getElementById('zoom-pct').textContent") == "125%"
     assert abs(rect(view, "#booklet")[2] - w0 * 1.25) < 2
     assert js(view, "document.querySelector('#qblock-0 .q-header').offsetHeight") == before
-    assert float(js(view, "document.getElementById('sheet').style.zoom")) == 1.25
+    assert float(js(view, "getComputedStyle(document.getElementById('sheet')).zoom")) == 1
     key(view, Qt.Key.Key_Minus, "-", Qt.KeyboardModifier.ControlModifier)
     assert js(view, "document.getElementById('zoom-pct').textContent") == "110%"
     key(view, Qt.Key.Key_0, "0", Qt.KeyboardModifier.ControlModifier)

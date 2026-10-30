@@ -71,8 +71,9 @@ The add-on supports balanced round-robin style sampling across subdecks so a sin
 ### Highlighter, Pen and Zoom
 - **Highlighter** in yellow, green or pink: drag over text. Click a highlight to remove it.
 - **Pen** in blue or red: write or draw directly on the booklet.
-- **Eraser**, **Undo** and **Clear drawings**.
-- **Zoom** magnifies the whole page (70–200%) without re-flowing the text, so your marks stay on the right words. The answer sheet grows with it.
+- **Eraser**, **Undo**, **Clear highlights** and **Clear drawings**. Both clear buttons ask first, and Undo brings everything back.
+- **Zoom** magnifies the whole booklet page (70–200%) without re-flowing the text, so your marks stay on the right words.
+- The **answer sheet has its own zoom** (70–200%), with its own buttons above the sheet, so you can enlarge the boxes without changing the booklet.
 - Your highlights and drawings last for the whole exam. A new exam starts clean.
 
 | Key | Action |
@@ -82,8 +83,8 @@ The add-on supports balanced round-robin style sampling across subdecks so a sin
 | `E` | Eraser |
 | `Esc` | Back to the pointer |
 | `Ctrl` + `Z` | Undo |
-| `Ctrl` + `+` / `Ctrl` + `−` | Zoom in / out |
-| `Ctrl` + `0` | Reset zoom |
+| `Ctrl` + `+` / `Ctrl` + `−` | Zoom in / out the side under the mouse (booklet or answer sheet) |
+| `Ctrl` + `0` | Reset that side's zoom |
 
 ### Scoring Modes
 - **All or Nothing**
