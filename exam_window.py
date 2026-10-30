@@ -16,6 +16,8 @@ from aqt.qt import Qt
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from aqt import mw
 
+from . import i18n
+from .i18n import t
 from .paper import NOTES_CSS, NOTES_JS, PAPER_CSS, PEN_SVG, comb_field, fmt_duration
 
 
@@ -83,8 +85,7 @@ class ExamWindow(QMainWindow):
         self.save_history  = save_history
         self._notes        = {}
 
-        self.setWindowTitle(
-            f"Exam Simulator — {len(questions)} Questions  |  {exam_name}")
+        self.setWindowTitle(t("exam_window_title", n=len(questions), name=exam_name))
 
         self._web = QWebEngineView()
         self._web.setContextMenuPolicy(Qt.ContextMenuPolicy.NoContextMenu)
@@ -194,19 +195,23 @@ class ExamWindow(QMainWindow):
         timer_s = self.timer_seconds
         hidden  = "hidden" if not timer_s else ""
         name    = html.escape(self.exam_name)
-        today   = date.today().strftime("%d/%m/%Y")
+        today   = i18n.fmt_date(date.today())
         dur     = fmt_duration(timer_s)
-        dur_html = f'<span><b>Durée :</b> {dur}</span>' if dur else ""
+        dur_html = f'<span><b>{i18n.label("duration")}</b> {dur}</span>' if dur else ""
+        js_strings = json.dumps(i18n.strings(
+            "source", "label_colon", "go_to_question", "submit_title", "submit_msg",
+            "submit_ok", "submit_cancel", "grading", "clear_title", "clear_msg",
+            "clear_ok", "cancel"), ensure_ascii=False).replace("</", "<\\/")
 
         def swatch(kind, color, label):
             return (f'<button class="sw sw-{color}" data-kind="{kind}" data-color="{color}" '
                     f'onclick="pickColor(\'{kind}\',\'{color}\')" title="{label}" aria-label="{label}"></button>')
 
         return f"""<!DOCTYPE html>
-<html lang="fr">
+<html lang="{i18n.lang()}">
 <head>
 <meta charset="utf-8">
-<title>Exam — {name}</title>
+<title>{t("exam_page_title", name=name)}</title>
 <style>{PAPER_CSS}{NOTES_CSS}{_EXAM_CSS}</style>
 </head>
 <body data-tool="pointer">
@@ -215,39 +220,45 @@ class ExamWindow(QMainWindow):
 <div id="topbar">
   <div id="exam-meta">
     <span id="exam-title">{name}</span>
-    <span id="progress"><b id="ans-count">0</b> / {n} answered</span>
+    <span id="progress"><b id="ans-count">0</b> / {n} {t("answered")}</span>
   </div>
   <div id="timer-wrap" class="{hidden}"><span id="timer-text">--:--</span></div>
-  <button id="submit-btn" onclick="askSubmit()">Submit Exam</button>
+  <button id="submit-btn" onclick="askSubmit()">{t("submit")}</button>
 </div>
 
 <!-- MAIN -->
 <div id="main">
   <div id="left-panel" class="desk">
-    <div id="tools" role="toolbar" aria-label="Booklet tools">
+    <div id="tools" role="toolbar" aria-label="{t("tools_label")}">
       <div class="tgroup">
-        <button class="tool" data-tool="pointer" onclick="setTool('pointer', true)" title="Pointer (Esc)">{_ICONS["pointer"]}<span>Pointer</span></button>
-        <button class="tool" data-tool="hl" onclick="setTool('hl')" title="Highlighter (H)">{_ICONS["hl"]}<span>Highlight</span></button>
-        <span class="swatches">{swatch("hl", "yellow", "Yellow highlighter")}{swatch("hl", "green", "Green highlighter")}{swatch("hl", "pink", "Pink highlighter")}</span>
-        <button class="tool" data-tool="pen" onclick="setTool('pen')" title="Pen (P)">{_ICONS["pen"]}<span>Pen</span></button>
-        <span class="swatches">{swatch("pen", "blue", "Blue pen")}{swatch("pen", "red", "Red pen")}</span>
-        <button class="tool" data-tool="eraser" onclick="setTool('eraser')" title="Eraser (E)">{_ICONS["eraser"]}<span>Eraser</span></button>
+        <button class="tool" data-tool="pointer" onclick="setTool('pointer', true)" title="{t("tip_pointer")}">{_ICONS["pointer"]}<span>{t("tool_pointer")}</span></button>
+        <button class="tool" data-tool="hl" onclick="setTool('hl')" title="{t("tip_highlight")}">{_ICONS["hl"]}<span>{t("tool_highlight")}</span></button>
+        <span class="swatches">{swatch("hl", "yellow", t("hl_yellow"))}{swatch("hl", "green", t("hl_green"))}{swatch("hl", "pink", t("hl_pink"))}</span>
+        <button class="tool" data-tool="pen" onclick="setTool('pen')" title="{t("tip_pen")}">{_ICONS["pen"]}<span>{t("tool_pen")}</span></button>
+        <span class="swatches">{swatch("pen", "blue", t("pen_blue"))}{swatch("pen", "red", t("pen_red"))}</span>
+        <button class="tool" data-tool="eraser" onclick="setTool('eraser')" title="{t("tip_eraser")}">{_ICONS["eraser"]}<span>{t("tool_eraser")}</span></button>
       </div>
       <div class="tgroup">
-        <button class="tool" onclick="undo()" title="Undo (Ctrl Z)">{_ICONS["undo"]}<span>Undo</span></button>
-        <button class="tool" onclick="clearDrawings()" title="Remove all pen drawings">{_ICONS["clear"]}<span>Clear drawings</span></button>
+        <button class="tool" onclick="undo()" title="{t("tip_undo")}">{_ICONS["undo"]}<span>{t("tool_undo")}</span></button>
+        <button class="tool" onclick="clearDrawings()" title="{t("tip_clear")}">{_ICONS["clear"]}<span>{t("tool_clear")}</span></button>
       </div>
       <div class="tgroup zoom">
-        <button class="tool tool-sq" onclick="zoomOut()" title="Zoom out (Ctrl −)" aria-label="Zoom out">{_ICONS["minus"]}</button>
-        <button class="tool" id="zoom-pct" onclick="resetZoom()" title="Reset zoom (Ctrl 0)">100%</button>
-        <button class="tool tool-sq" onclick="zoomIn()" title="Zoom in (Ctrl +)" aria-label="Zoom in">{_ICONS["plus"]}</button>
+        <button class="tool tool-sq" onclick="zoomOut()" title="{t("zoom_out")}" aria-label="{t("zoom_out")}">{_ICONS["minus"]}</button>
+        <button class="tool" id="zoom-pct" onclick="resetZoom()" title="{t("zoom_reset")}">100%</button>
+        <button class="tool tool-sq" onclick="zoomIn()" title="{t("zoom_in")}" aria-label="{t("zoom_in")}">{_ICONS["plus"]}</button>
       </div>
     </div>
     <div id="booklet-sizer">
       <article id="booklet" class="paper">
         <header class="paper-head">
-          <div class="ph-row"><span><b>Module :</b> {name}</span><span><b>Date :</b> {today}</span></div>
-          <div class="ph-row"><span>{n} QCM</span>{dur_html}</div>
+          <div class="ph-row">
+            <span><b>{i18n.label("module")}</b> {name}</span>
+            <span><b>{i18n.label("date")}</b> {today}</span>
+          </div>
+          <div class="ph-row">
+            <span>{t("n_mcq", n=n)}</span>
+            {dur_html}
+          </div>
         </header>
         <div id="questions-container"></div>
         <svg id="ink-layer" class="ink-layer" style="width:100%;height:100%"></svg>
@@ -255,15 +266,15 @@ class ExamWindow(QMainWindow):
     </div>
   </div>
   <div id="right-panel" class="desk">
-    <section id="sheet" class="paper" aria-label="Answer sheet">
+    <section id="sheet" class="paper" aria-label="{t("answer_sheet")}">
       <div class="sheet-head">
         <div class="sheet-fields">
-          {comb_field("Module", self.exam_name.upper(), 18)}
+          {comb_field(t("module"), self.exam_name.upper(), 18)}
         </div>
         <div class="sheet-rules">
-          <b>Consignes</b>
-          <p>Cochez d'une croix la ou les réponse(s) juste(s) dans la case correspondante.</p>
-          <p class="ex">Exemple : <span class="box box-on">{PEN_SVG}</span></p>
+          <b>{t("instructions")}</b>
+          <p>{t("instructions_text")}</p>
+          <p class="ex">{i18n.label("example")} <span class="box box-on">{PEN_SVG}</span></p>
         </div>
       </div>
       <div id="sheet-grid"></div>
@@ -291,6 +302,11 @@ const QUESTIONS     = {q_json};
 const TIMER_SECONDS = {timer_s};
 const N             = QUESTIONS.length;
 const PEN           = '{PEN_SVG}';
+const T             = {js_strings};
+
+// "Durée :" / "Duration:" and "{{n}}"-style placeholders
+function label(key) {{ return T.label_colon.replace("{{label}}", T[key]); }}
+function fill(text, vals) {{ return text.replace(/\\{{(\\w+)\\}}/g, (m, k) => (k in vals ? vals[k] : m)); }}
 
 let pybridge      = null;
 let answers       = {{}};
@@ -313,7 +329,7 @@ function renderQuestions() {{
     let opts = "";
     for (const [l, t] of Object.entries(q.options))
       opts += `<div class="q-opt"><span class="opt-letter">${{l}}:</span><span class="opt-text" data-part="${{l}}">${{t}}</span></div>`;
-    const src = q.source ? `<div class="q-source">Source : ${{q.source}}</div>` : "";
+    const src = q.source ? `<div class="q-source">${{label("source")}} ${{q.source}}</div>` : "";
     block.innerHTML = `
       <div class="q-header">
         <span class="q-num">${{i+1}}</span>
@@ -343,7 +359,7 @@ function renderGrid() {{
     let rows = "";
     for (let i = b * 10; i < Math.min(N, b * 10 + 10); i++) {{
       const q = QUESTIONS[i];
-      let cells = `<th class="qlabel" scope="row" onclick="scrollToQ(${{i}})" title="Go to question ${{i+1}}">${{TICK}}Q${{i+1}}</th>`;
+      let cells = `<th class="qlabel" scope="row" onclick="scrollToQ(${{i}})" title="${{fill(T.go_to_question, {{n: i+1}})}}">${{TICK}}Q${{i+1}}</th>`;
       cols.forEach(l => {{
         cells += q.options[l] !== undefined
           ? `<td><span class="box" id="b-${{i}}-${{l}}" role="checkbox" aria-checked="false" aria-label="Q${{i+1}} ${{l}}" tabindex="0" onclick="toggle(${{i}},'${{l}}')" onkeydown="boxKey(event,${{i}},'${{l}}')"></span></td>`
@@ -427,9 +443,8 @@ async function askSubmit() {{
   const done      = Object.values(answers).filter(s=>s&&s.size>0).length;
   const remaining = N - done;
   if (remaining > 0) {{
-    const ok = await showModal("Submit your paper?",
-      `${{remaining}} question(s) still have no answer marked on the sheet.`,
-      "Submit anyway", "Keep answering");
+    const ok = await showModal(T.submit_title, fill(T.submit_msg, {{n: remaining}}),
+      T.submit_ok, T.submit_cancel);
     if (!ok) return;
   }}
   doSubmit();
@@ -443,7 +458,7 @@ function doSubmit() {{
       payload[k] = Array.from(answers[k]).sort();
   }});
   document.getElementById("submit-btn").disabled    = true;
-  document.getElementById("submit-btn").textContent = "Grading…";
+  document.getElementById("submit-btn").textContent = T.grading;
   if (pybridge) {{
     pybridge.saveNotes(JSON.stringify(notesPayload()));
     pybridge.submitExam(JSON.stringify(payload));
@@ -667,9 +682,7 @@ function onInkUp() {
 
 async function clearDrawings() {
   if (!strokes.length) return;
-  const ok = await showModal("Clear all drawings?",
-    "This removes every pen stroke on the booklet. Your highlights stay.",
-    "Clear drawings", "Cancel");
+  const ok = await showModal(T.clear_title, T.clear_msg, T.clear_ok, T.cancel);
   if (!ok) return;
   const removed = strokes.slice();
   removed.forEach(removeStroke);

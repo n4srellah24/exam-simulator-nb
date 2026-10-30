@@ -26,6 +26,7 @@ Exam Simulator - NB lets you:
 - review a corrected copy of your booklet, question by question
 - flag or tag selected questions after the exam
 - keep simulation history locally without polluting normal Anki tags
+- use it in English or French, following Anki's own language setting
 
 ## Screenshots
 
@@ -109,6 +110,12 @@ You can:
 - clear all history
 
 This history is add-on-owned and local. It does **not** rely on normal Anki tags for storage.
+
+## Language
+
+The add-on follows Anki's interface language (**Tools → Preferences → Interface language**). If Anki is in French, everything is in French: the setup window, the question picker, the exam paper, the answer sheet, the toolbar and the results. Any other language gets English. Numbers and dates follow the language too, for example `16,17 / 20` and `30/10/2026` in French, or `16.17 / 20` and `30 Oct 2026` in English.
+
+If you change Anki's language, the next window you open uses it.
 
 ## Expected Note Type
 
@@ -208,7 +215,6 @@ It does not require a server, account, or external backend.
 - best suited for note types that follow the expected field names
 - not intended to be a universal quiz engine for arbitrary note schemas
 - answer choice order is not currently randomized
-- text printed on the exam paper is in French (Module, Date, Durée, Consignes); buttons and menus are in English
 - highlights and drawings are not saved after you close the results window
 
 ## Roadmap

@@ -3,6 +3,8 @@ import re
 from collections import defaultdict
 
 from aqt import mw
+
+from .i18n import t
 from aqt.qt import (
     QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QDialog,
     QEvent, QFormLayout, QFrame, QGroupBox, QHBoxLayout, QLabel, QLineEdit,
@@ -108,7 +110,7 @@ class CardPickerDialog(QDialog):
     def __init__(self, parent, note_type_name):
         super().__init__(parent)
         self.note_type_name = note_type_name
-        self.setWindowTitle("Browse & Select Questions")
+        self.setWindowTitle(t("picker_title"))
         self.resize(1060, 680)
         self.setMinimumSize(800, 500)
 
@@ -152,7 +154,7 @@ class CardPickerDialog(QDialog):
         dv = QVBoxLayout(deck_widget)
         dv.setContentsMargins(8, 8, 8, 8)
         dv.setSpacing(6)
-        deck_lbl = QLabel("Browse decks")
+        deck_lbl = QLabel(t("browse_decks"))
         deck_lbl.setStyleSheet("font-weight:bold;font-size:13px;")
         dv.addWidget(deck_lbl)
         self.deck_tree = QTreeWidget()
@@ -171,7 +173,7 @@ class CardPickerDialog(QDialog):
         tv = QVBoxLayout(tag_widget)
         tv.setContentsMargins(8, 8, 8, 8)
         tv.setSpacing(6)
-        tag_lbl = QLabel("Tags")
+        tag_lbl = QLabel(t("tags"))
         tag_lbl.setStyleSheet("font-weight:bold;font-size:13px;")
         tv.addWidget(tag_lbl)
         self.tag_list = QListWidget()
@@ -191,13 +193,13 @@ class CardPickerDialog(QDialog):
         etv = QVBoxLayout(exam_tag_widget)
         etv.setContentsMargins(8, 8, 8, 8)
         etv.setSpacing(6)
-        exam_tag_lbl = QLabel("Simulation History")
+        exam_tag_lbl = QLabel(t("simulation_history"))
         exam_tag_lbl.setStyleSheet("font-weight:bold;font-size:13px;")
         etv.addWidget(exam_tag_lbl)
 
         history_btn_row = QHBoxLayout()
-        self.delete_history_btn = QPushButton("Delete selected")
-        self.clear_history_btn = QPushButton("Clear all")
+        self.delete_history_btn = QPushButton(t("delete_selected"))
+        self.clear_history_btn = QPushButton(t("clear_all"))
         self.delete_history_btn.clicked.connect(self._delete_selected_history)
         self.clear_history_btn.clicked.connect(self._clear_all_history)
         history_btn_row.addWidget(self.delete_history_btn)
@@ -221,12 +223,12 @@ class CardPickerDialog(QDialog):
         fv = QVBoxLayout(flag_widget)
         fv.setContentsMargins(8, 8, 8, 8)
         fv.setSpacing(6)
-        flag_lbl = QLabel("Flags")
+        flag_lbl = QLabel(t("flags"))
         flag_lbl.setStyleSheet("font-weight:bold;font-size:13px;")
         fv.addWidget(flag_lbl)
         self._flag_checks = {}
         for fnum, name, color in FLAG_DEFS:
-            cb = QCheckBox(f"  {name}")
+            cb = QCheckBox(f"  {t(f'flag_{fnum}')}")
             cb.setStyleSheet(f"color:{color};font-weight:bold;font-size:12px;")
             cb.stateChanged.connect(self._on_flag_changed)
             self._flag_checks[fnum] = cb
@@ -234,7 +236,7 @@ class CardPickerDialog(QDialog):
         fv.addStretch()
         self._filter_stack.addWidget(flag_widget)
 
-        for idx, label in enumerate(["Decks", "Tags", "Simulation History", "Flags"]):
+        for idx, label in enumerate([t("decks"), t("tags"), t("simulation_history"), t("flags")]):
             btn = QPushButton(label)
             btn.setCheckable(True)
             btn.setFlat(True)
@@ -253,7 +255,7 @@ class CardPickerDialog(QDialog):
         rv.setContentsMargins(4, 4, 4, 4)
 
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("🔍  Search question text…")
+        self.search_box.setPlaceholderText(t("search_placeholder"))
         self.search_box.setClearButtonEnabled(True)
         self.search_box.textChanged.connect(self._apply_filters)
         rv.addWidget(self.search_box)
@@ -265,17 +267,17 @@ class CardPickerDialog(QDialog):
         rv.addWidget(self._active_filters_wrap)
 
         sel_row = QHBoxLayout()
-        sel_all = QPushButton("✓ Select all visible")
-        sel_none = QPushButton("✕ Deselect all visible")
+        sel_all = QPushButton(t("select_all_visible"))
+        sel_none = QPushButton(t("deselect_all_visible"))
         sel_all.clicked.connect(self._select_all_visible)
         sel_none.clicked.connect(self._deselect_visible)
-        self.preview_btn = QPushButton("👁  Preview")
+        self.preview_btn = QPushButton(t("preview"))
         self.preview_btn.setCheckable(True)
-        self.preview_btn.setToolTip("Show/hide question preview panel")
+        self.preview_btn.setToolTip(t("preview_tip"))
         self.preview_btn.toggled.connect(self._toggle_preview)
-        self.visible_lbl = QLabel("0 shown")
+        self.visible_lbl = QLabel(t("n_shown", n=0))
         self.visible_lbl.setStyleSheet("color:#64748b;")
-        self.count_lbl = QLabel("Selected: 0")
+        self.count_lbl = QLabel(t("selected_count", n=0))
         self.count_lbl.setStyleSheet("font-weight:bold;color:#2563eb;")
         sel_row.addWidget(sel_all)
         sel_row.addWidget(sel_none)
@@ -325,9 +327,9 @@ class CardPickerDialog(QDialog):
 
         btn_row = QHBoxLayout()
         btn_row.addStretch()
-        cancel = QPushButton("Cancel")
+        cancel = QPushButton(t("cancel"))
         cancel.clicked.connect(self.reject)
-        ok = QPushButton("Use Selected  ▶")
+        ok = QPushButton(t("use_selected"))
         ok.setDefault(True)
         ok.clicked.connect(self._confirm)
         btn_row.addWidget(cancel)
@@ -396,7 +398,7 @@ class CardPickerDialog(QDialog):
     def _populate_deck_tree(self, deck_names):
         self.deck_tree.blockSignals(True)
         self.deck_tree.clear()
-        all_item = QTreeWidgetItem(["All decks"])
+        all_item = QTreeWidgetItem([t("all_decks")])
         all_item.setData(0, Qt.ItemDataRole.UserRole, None)
         self.deck_tree.addTopLevelItem(all_item)
         nodes = {}
@@ -499,14 +501,14 @@ class CardPickerDialog(QDialog):
 
         labels = self._checked_history_labels()
         if not labels:
-            QMessageBox.information(self, "No History Selected",
-                                    "Select at least one simulation history item to delete.")
+            QMessageBox.information(self, t("no_history_selected_title"),
+                                    t("no_history_selected_msg"))
             return
         count = len(labels)
         answer = QMessageBox.question(
             self,
-            "Delete Simulation History",
-            f"Delete {count} selected simulation histor{'y' if count == 1 else 'ies'}?\n\nThis only removes local addon history. It does not delete notes.",
+            t("delete_history_title"),
+            t("delete_history_msg", n=count),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -523,8 +525,8 @@ class CardPickerDialog(QDialog):
             return
         answer = QMessageBox.question(
             self,
-            "Clear All Simulation History",
-            "Delete all local simulation history?\n\nThis only removes addon history. It does not delete notes.",
+            t("clear_history_title"),
+            t("clear_history_msg"),
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.No,
         )
@@ -596,24 +598,24 @@ class CardPickerDialog(QDialog):
         self._clear_active_filter_chips()
         added = False
         if self._active_deck:
-            self._add_filter_chip(f"Deck: {self._active_deck}")
+            self._add_filter_chip(t("chip_deck", v=self._active_deck))
             added = True
         for tag in sorted(self._active_tags):
-            self._add_filter_chip(f"Tag: {tag}")
+            self._add_filter_chip(t("chip_tag", v=tag))
             added = True
         for tag in sorted(self._active_exam_tags):
             display = tag.split("::", 1)[1] if "::" in tag else tag
-            self._add_filter_chip(f"Simulation: {display}")
+            self._add_filter_chip(t("chip_simulation", v=display))
             added = True
         for fnum in sorted(self._active_flags):
-            self._add_filter_chip(f"Flag: {FLAG_DEFS[fnum - 1][1]}")
+            self._add_filter_chip(t("chip_flag", v=t(f"flag_{fnum}")))
             added = True
         search = self.search_box.text().strip()
         if search:
-            self._add_filter_chip(f"Search: {search}")
+            self._add_filter_chip(t("chip_search", v=search))
             added = True
         if not added:
-            empty = QLabel("No filters applied")
+            empty = QLabel(t("no_filters"))
             self._active_filters_layout.addWidget(empty)
         self._active_filters_layout.addStretch()
 
@@ -656,7 +658,7 @@ class CardPickerDialog(QDialog):
         self._rebuild_list(visible)
 
     def _result_item_label(self, nid, meta):
-        flag_str = f"[{FLAG_DEFS[meta['flag']-1][1]}] " if meta["flag"] > 0 else ""
+        flag_str = "[" + t("flag_%d" % meta["flag"]) + "] " if meta["flag"] > 0 else ""
         tag_str = ""
         if meta["tags"]:
             tag_str = "  🏷 " + ", ".join(meta["tags"][:3])
@@ -687,7 +689,7 @@ class CardPickerDialog(QDialog):
             )
             self.result_list.addItem(item)
         self.result_list.blockSignals(False)
-        self.visible_lbl.setText(f"{len(items)} shown")
+        self.visible_lbl.setText(t("n_shown", n=len(items)))
         self._refresh_count()
 
     # ── Selection ─────────────────────────────────────────────────────────────
@@ -720,7 +722,7 @@ class CardPickerDialog(QDialog):
         self._refresh_count()
 
     def _refresh_count(self):
-        self.count_lbl.setText(f"Selected: {len(self._selected)}")
+        self.count_lbl.setText(t("selected_count", n=len(self._selected)))
 
     def _toggle_preview(self, checked):
         self._preview_pane.setVisible(checked)
@@ -779,7 +781,7 @@ class CardPickerDialog(QDialog):
             finfo = FLAG_DEFS[meta["flag"] - 1]
             layout.insertWidget(
                 layout.count() - 1,
-                lbl(f"⚑  {finfo[1]}", color=finfo[2], size=12, bold=True)
+                lbl("⚑  " + t("flag_%d" % meta["flag"]), color=finfo[2], size=12, bold=True)
             )
 
         if meta["tags"]:
@@ -818,13 +820,13 @@ class CardPickerDialog(QDialog):
                 layout.insertWidget(layout.count() - 1, src_w)
         else:
             layout.insertWidget(
-                layout.count() - 1, lbl("Could not parse this card.", size=12)
+                layout.count() - 1, lbl(t("cannot_parse"), size=12)
             )
 
     def _confirm(self):
         if not self._selected:
-            QMessageBox.warning(self, "Nothing Selected",
-                                "Please select at least one question.")
+            QMessageBox.warning(self, t("nothing_selected_title"),
+                                t("nothing_selected_msg"))
             return
         self.accept()
 
@@ -840,7 +842,7 @@ class CardPickerDialog(QDialog):
 class LauncherDialog(QDialog):
     def __init__(self, parent):
         super().__init__(parent)
-        self.setWindowTitle("Exam Simulator — Setup")
+        self.setWindowTitle(t("setup_title"))
         self.setMinimumWidth(480)
         self._picked_ids  = []
         self._picked_meta = {}   # nid -> meta (for smart sampling)
@@ -864,51 +866,51 @@ class LauncherDialog(QDialog):
         self._populate_note_types()
 
         # ── Note type ───────────────────────────────────────────────────────
-        nt_group = QGroupBox("Note Type")
+        nt_group = QGroupBox(t("note_type"))
         nt_layout = QVBoxLayout(nt_group)
         nt_top = QHBoxLayout()
-        nt_hint = QLabel("Choose an MCQ note type")
+        nt_hint = QLabel(t("choose_note_type"))
         self.note_type_combo = QComboBox()
         self.note_type_combo.addItems(self._note_type_names)
         default_idx = self.note_type_combo.findText(DEFAULT_NOTE_TYPE)
         if default_idx >= 0:
             self.note_type_combo.setCurrentIndex(default_idx)
         self.note_type_combo.setToolTip(
-            "Select one of your existing Anki note types.")
+            t("note_type_tip"))
         nt_top.addWidget(nt_hint)
         nt_top.addWidget(self.note_type_combo, 1)
         nt_layout.addLayout(nt_top)
         layout.addWidget(nt_group)
 
         # ── Exam name ───────────────────────────────────────────────────────
-        name_group = QGroupBox("Exam Name")
+        name_group = QGroupBox(t("exam_name"))
         name_layout = QVBoxLayout(name_group)
-        name_label = QLabel("Simulation name")
-        name_help = QLabel("Saved in Simulation History")
+        name_label = QLabel(t("simulation_name"))
+        name_help = QLabel(t("saved_in_history"))
         name_help.setWordWrap(True)
         name_help.setStyleSheet("color:#64748b;font-size:12px;")
         self.exam_name_edit = QLineEdit()
-        self.exam_name_edit.setPlaceholderText("e.g.  Gastro_2024_Exam1")
+        self.exam_name_edit.setPlaceholderText(t("exam_name_placeholder"))
         name_layout.addWidget(name_label)
         name_layout.addWidget(name_help)
         name_layout.addWidget(self.exam_name_edit)
         layout.addWidget(name_group)
 
         # ── Question selection ──────────────────────────────────────────────
-        q_group = QGroupBox("Questions")
+        q_group = QGroupBox(t("questions"))
         q_layout = QVBoxLayout(q_group)
 
         pick_row = QHBoxLayout()
-        self.pick_label = QLabel("No questions selected yet.")
+        self.pick_label = QLabel(t("none_selected_yet"))
         self.pick_label.setStyleSheet("color:#64748b;font-style:italic;")
-        pick_btn = QPushButton("📋  Browse && Pick Questions…")
+        pick_btn = QPushButton(t("browse_pick"))
         pick_btn.clicked.connect(self._open_picker)
         pick_row.addWidget(self.pick_label, 1)
         pick_row.addWidget(pick_btn)
         q_layout.addLayout(pick_row)
 
         limit_row = QHBoxLayout()
-        self.limit_check = QCheckBox("Limit to")
+        self.limit_check = QCheckBox(t("limit_to"))
         self.limit_spin  = QSpinBox()
         self.limit_spin.setRange(1, 999)
         self.limit_spin.setValue(20)
@@ -916,16 +918,16 @@ class LauncherDialog(QDialog):
         limit_row.addWidget(self.limit_check)
         limit_row.addWidget(self.limit_spin)
         limit_row.addWidget(
-            QLabel("questions  (balanced across sub-decks/lessons)"))
+            QLabel(t("limit_hint")))
         limit_row.addStretch()
         self.limit_check.toggled.connect(self.limit_spin.setEnabled)
         q_layout.addLayout(limit_row)
         layout.addWidget(q_group)
 
         # ── Timer ───────────────────────────────────────────────────────────
-        timer_group = QGroupBox("Timer")
+        timer_group = QGroupBox(t("timer"))
         timer_layout = QHBoxLayout(timer_group)
-        self.timer_check = QCheckBox("Enable timer")
+        self.timer_check = QCheckBox(t("enable_timer"))
         self.timer_spin  = QSpinBox()
         self.timer_spin.setRange(1, 300)
         self.timer_spin.setValue(60)
@@ -933,35 +935,35 @@ class LauncherDialog(QDialog):
         self.timer_check.toggled.connect(self.timer_spin.setEnabled)
         timer_layout.addWidget(self.timer_check)
         timer_layout.addWidget(self.timer_spin)
-        timer_layout.addWidget(QLabel("minutes"))
+        timer_layout.addWidget(QLabel(t("minutes")))
         timer_layout.addStretch()
         layout.addWidget(timer_group)
 
         # ── Scoring ─────────────────────────────────────────────────────────
-        score_group = QGroupBox("Scoring System")
+        score_group = QGroupBox(t("scoring_system"))
         score_layout = QFormLayout(score_group)
         score_layout.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
 
         self.scoring_combo = QComboBox()
         self.scoring_combo.addItems([
-            "All or Nothing",
-            "Partial Positive +",
-            "Partial Negative -",
+            t("mode_raw"),
+            t("mode_partial"),
+            t("mode_negative"),
         ])
-        score_layout.addRow("Method:", self.scoring_combo)
+        score_layout.addRow(t("method"), self.scoring_combo)
         layout.addWidget(score_group)
 
         # ── Shuffle ─────────────────────────────────────────────────────────
-        self.shuffle_check = QCheckBox("Shuffle question order")
+        self.shuffle_check = QCheckBox(t("shuffle"))
         self.shuffle_check.setChecked(True)
         layout.addWidget(self.shuffle_check)
 
         # ── Buttons ─────────────────────────────────────────────────────────
         btn_layout = QHBoxLayout()
         btn_layout.addStretch()
-        cancel_btn = QPushButton("Cancel")
+        cancel_btn = QPushButton(t("cancel"))
         cancel_btn.clicked.connect(self.reject)
-        self.start_btn = QPushButton("▶  Start Exam")
+        self.start_btn = QPushButton(t("start_exam"))
         self.start_btn.setDefault(True)
         self.start_btn.setEnabled(False)
         self.start_btn.clicked.connect(self._start)
@@ -979,7 +981,7 @@ class LauncherDialog(QDialog):
             self._picked_meta = dlg.note_meta()
             n = len(self._picked_ids)
             self.pick_label.setText(
-                f"{n} question{'s' if n != 1 else ''} selected.")
+                t("n_picked_one" if n == 1 else "n_picked_many", n=n))
             self.pick_label.setStyleSheet(
                 "color:#16a34a;font-weight:bold;")
             self.limit_spin.setMaximum(n)
@@ -987,7 +989,7 @@ class LauncherDialog(QDialog):
 
     def _start(self):
         self.start_btn.setEnabled(False)
-        self.start_btn.setText("Loading…")
+        self.start_btn.setText(t("loading"))
 
         note_type = self.note_type_combo.currentText().strip() or DEFAULT_NOTE_TYPE
         note_ids  = list(self._picked_ids)
@@ -1015,11 +1017,9 @@ class LauncherDialog(QDialog):
 
         if not questions:
             QMessageBox.warning(
-                self, "No Valid Questions",
-                "Could not parse any valid questions.\n"
-                "Check that the 'Ans' field is filled in those cards.")
+                self, t("no_valid_title"), t("no_valid_msg"))
             self.start_btn.setEnabled(True)
-            self.start_btn.setText("▶  Start Exam")
+            self.start_btn.setText(t("start_exam"))
             return
 
         scoring_modes = ["raw", "partial", "negative"]
@@ -1035,14 +1035,14 @@ class LauncherDialog(QDialog):
         if not save_history:
             answer = QMessageBox.question(
                 self,
-                "Start Without a Name?",
-                "This exam will not be saved in Simulation History unless you give it a name.\n\nStart anyway?",
+                t("no_name_title"),
+                t("no_name_msg"),
                 QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
                 QMessageBox.StandardButton.No,
             )
             if answer != QMessageBox.StandardButton.Yes:
                 self.start_btn.setEnabled(True)
-                self.start_btn.setText("▶  Start Exam")
+                self.start_btn.setText(t("start_exam"))
                 return
 
         self.accept()

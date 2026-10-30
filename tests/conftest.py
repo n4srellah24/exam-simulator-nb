@@ -127,6 +127,7 @@ def addon(mw):
         launcher=importlib.import_module(PKG + ".launcher"),
         history=importlib.import_module(PKG + ".history_store"),
         exam_window=importlib.import_module(PKG + ".exam_window"),
+        i18n=importlib.import_module(PKG + ".i18n"),
     )
 
 

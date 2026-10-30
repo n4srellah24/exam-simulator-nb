@@ -7,6 +7,8 @@ from datetime import date
 
 import json
 
+from . import i18n
+from .i18n import t
 from .paper import NOTES_CSS, NOTES_JS, PAPER_CSS, PEN_SVG, fmt_duration, mark_svg
 
 # ── Flag definitions ──────────────────────────────────────────────────────────
@@ -25,13 +27,6 @@ FLAG_COLORS = {
 def _clean_zero(value: float, places: int = 6) -> float:
     rounded = round(float(value), places)
     return 0.0 if abs(rounded) < 10 ** (-places) else rounded
-
-
-def _fmt_score(value: float) -> str:
-    value = _clean_zero(value)
-    if float(value).is_integer():
-        return str(int(value))
-    return f"{value:.2f}".rstrip("0").rstrip(".")
 
 
 # ── compute_score ─────────────────────────────────────────────────────────────
@@ -129,12 +124,9 @@ def compute_score(questions, answers_dict, scoring):
 
 # ── build_results_html ────────────────────────────────────────────────────────
 
-STATUS_LABELS = {
-    "correct": "Correct",
-    "partial": "Partial",
-    "wrong": "Wrong",
-    "skipped": "Skipped",
-}
+def _status_label(status):
+    return t("status_" + status) if status in ("correct", "partial", "wrong", "skipped") \
+        else t("status_skipped")
 
 
 def _option_html(letter, text, is_correct, is_chosen):
@@ -147,9 +139,9 @@ def _option_html(letter, text, is_correct, is_chosen):
         classes.append("bad")
     notes = []
     if is_chosen:
-        notes.append("your answer")
+        notes.append(t("your_answer"))
     if is_correct:
-        notes.append("correct answer")
+        notes.append(t("correct_answer"))
     sr = f'<span class="sr">({", ".join(notes)})</span>' if notes else ""
     ink = PEN_SVG if is_chosen else ""
     return (
@@ -165,26 +157,22 @@ def build_results_html(results):
     pct = _clean_zero(results["percentage"])
     score_20 = _clean_zero(results["score_20"])
     exam_name = html.escape(results.get("exam_name", "Exam"))
-    today = date.today().strftime("%d/%m/%Y")
+    today = i18n.fmt_date(date.today())
     dur = fmt_duration(results.get("timer_seconds"))
-    dur_html = f'<span><b>Durée :</b> {dur}</span>' if dur else ""
+    dur_html = f'<span><b>{i18n.label("duration")}</b> {dur}</span>' if dur else ""
 
     if score_20 >= 17:
-        grade_label = "Excellent"
+        grade_label = t("grade_excellent")
     elif score_20 >= 14:
-        grade_label = "Good"
+        grade_label = t("grade_good")
     elif score_20 >= 10:
-        grade_label = "Pass"
+        grade_label = t("grade_pass")
     else:
-        grade_label = "Fail"
+        grade_label = t("grade_fail")
 
     score_mode = results["scoring"]["mode"]
-    mode_labels = {
-        "raw": "All or Nothing",
-        "partial": "Partial Positive +",
-        "negative": "Partial Negative -",
-    }
-    mode_label = mode_labels.get(score_mode, "Custom")
+    mode_label = t("mode_" + score_mode) if score_mode in ("raw", "partial", "negative") \
+        else t("mode_custom")
 
     q_blocks = ""
     for r in results["questions"]:
@@ -195,25 +183,25 @@ def build_results_html(results):
             for letter, text in r["options"].items()
         )
 
-        src_html = f'<div class="q-source">Source : {r["source"]}</div>' if r.get("source") else ""
+        src_html = f'<div class="q-source">{i18n.label("source")} {r["source"]}</div>' if r.get("source") else ""
 
         expl_html = ""
         if r.get("explanation"):
             expl_html = (
                 f'<div class="expl-wrap">'
                 f'<button class="expl-toggle" aria-expanded="false" onclick="toggleExpl(this)">'
-                f'Show explanation</button>'
+                f'{t("show_expl")}</button>'
                 f'<div class="expl-body" hidden>{r["explanation"]}</div>'
                 f'</div>'
             )
 
-        label = STATUS_LABELS.get(status, "Skipped")
+        label = _status_label(status)
         q_blocks += (
             f'<div class="r-q" id="qrow-{r["index"]}" data-qi="{r["index"]}" data-status="{status}" '
             f'onclick="toggleRowSelection(event, {r["index"]})">'
-            f'<label class="sel" title="Select question {num}">'
+            f'<label class="sel" title="{t("select_question", n=num)}">'
             f'<input type="checkbox" class="q-check" data-nid="{r.get("nid", "")}" '
-            f'aria-label="Select question {num}" onchange="refreshSelCount()">'
+            f'aria-label="{t("select_question", n=num)}" onchange="refreshSelCount()">'
             f'</label>'
             f'<div class="r-body">'
             f'<div class="q-header"><span class="q-num">{num}</span>'
@@ -223,23 +211,23 @@ def build_results_html(results):
             f'</div>'
             f'<div class="r-mark" title="{label}">'
             f'{mark_svg(status)}'
-            f'<span class="r-score">{_fmt_score(r["earned"])}<small>/{_fmt_score(r["possible"])}</small></span>'
+            f'<span class="r-score">{i18n.fmt_num(r["earned"])}<small>/{i18n.fmt_num(r["possible"])}</small></span>'
             f'<span class="sr">{label}</span>'
             f'</div>'
             f'</div>'
         )
 
     flag_opts = ''.join(
-        f'<option value="{fnum}">{name}</option>'
-        for fnum, (_, name) in FLAG_COLORS.items()
+        f'<option value="{fnum}">{t(f"flag_{fnum}")}</option>'
+        for fnum in FLAG_COLORS
     )
 
     flag_svg_map = '{' + ','.join(
         f'{fnum}:\'<svg width="14" height="14" viewBox="0 0 24 24" '
         f'xmlns=\\"http://www.w3.org/2000/svg\\" style=\\"vertical-align:middle\\">'
         f'<path fill=\\"{col}\\" d=\\"M5 3v18h2v-7h10l-2-4 2-4H7V3H5z\\"/>'
-        f'</svg> {name}\''
-        for fnum, (col, name) in FLAG_COLORS.items()
+        f'</svg> {t(f"flag_{fnum}")}\''
+        for fnum, (col, _) in FLAG_COLORS.items()
     ) + '}'
 
     n_q = len(results["questions"])
@@ -248,13 +236,16 @@ def build_results_html(results):
     notes_json = json.dumps(notes, ensure_ascii=False).replace("</", "<\\/")
     notes_btn = (
         '<button id="notes-toggle" class="notes-btn active" aria-pressed="true" '
-        'onclick="toggleNotes()" title="Show or hide your highlights and drawings">'
-        '<span>Show my notes</span></button>'
+        f'onclick="toggleNotes()" title="{t("show_notes_tip")}">'
+        f'<span>{t("show_notes")}</span></button>'
     ) if has_notes else ""
+    js_strings = json.dumps(i18n.strings(
+        "n_selected", "show_expl", "hide_expl", "need_selection", "need_tag",
+        "flag_applied", "tagged"), ensure_ascii=False).replace("</", "<\\/")
 
     def filter_btn(status, count, active=False):
         icon = "" if status == "all" else mark_svg(status)
-        label = "All" if status == "all" else STATUS_LABELS[status]
+        label = t("all") if status == "all" else _status_label(status)
         cls = "filt active" if active else "filt"
         return (f'<button class="{cls}" data-filter="{status}" aria-pressed="{str(active).lower()}" '
                 f'onclick="filterRows(\'{status}\')">{icon}<span>{label}</span>'
@@ -266,10 +257,10 @@ def build_results_html(results):
     filters += filter_btn("wrong", results["n_wrong"]) + filter_btn("skipped", results["n_skipped"])
 
     return f"""<!DOCTYPE html>
-<html lang="fr">
+<html lang="{i18n.lang()}">
 <head>
 <meta charset="utf-8">
-<title>Results — {exam_name}</title>
+<title>{t("results_page_title", name=exam_name)}</title>
 <style>
 {PAPER_CSS}
 {NOTES_CSS}
@@ -388,30 +379,30 @@ body.notes-off .r-body .ink-layer {{ display: none; }}
 <body>
 
 <div id="topbar">
-  <h1>{exam_name}<span class="sub">Corrected · {mode_label} · {n_q} questions</span></h1>
+  <h1>{exam_name}<span class="sub">{t("corrected")} · {mode_label} · {t("n_questions", n=n_q)}</span></h1>
   <div id="top-actions">
-    <button class="hdr-btn btn-close" onclick="finishExam()">Close</button>
-    <button class="hdr-btn btn-another" onclick="takeAnotherExam()">Take another exam</button>
+    <button class="hdr-btn btn-close" onclick="finishExam()">{t("close")}</button>
+    <button class="hdr-btn btn-another" onclick="takeAnotherExam()">{t("take_another")}</button>
   </div>
 </div>
 
 <div id="toolbar">
-  <div class="tool-group" role="group" aria-label="Show">{filters}</div>
+  <div class="tool-group" role="group" aria-label="{t("show")}">{filters}</div>
   {notes_btn}
   <div class="tool-group">
-    <span id="sel-count">0 selected</span>
-    <button class="act-btn" onclick="selectAll()">Select all</button>
-    <button class="act-btn" onclick="deselectAll()">Clear</button>
+    <span id="sel-count">{t("n_selected", n=0)}</span>
+    <button class="act-btn" onclick="selectAll()">{t("select_all")}</button>
+    <button class="act-btn" onclick="deselectAll()">{t("clear_selection")}</button>
   </div>
   <div class="tool-group">
-    <label class="tool-label" for="flag-select">Flag</label>
+    <label class="tool-label" for="flag-select">{t("flag")}</label>
     <select id="flag-select">{flag_opts}</select>
-    <button class="act-btn act-btn-primary" onclick="applyFlag()">Apply flag</button>
+    <button class="act-btn act-btn-primary" onclick="applyFlag()">{t("apply_flag")}</button>
   </div>
   <div class="tool-group">
-    <label class="tool-label" for="tag-input">Tag</label>
-    <input id="tag-input" type="text" placeholder="e.g. needs_review">
-    <button class="act-btn act-btn-primary" onclick="applyTag()">Apply tag</button>
+    <label class="tool-label" for="tag-input">{t("tag")}</label>
+    <input id="tag-input" type="text" placeholder="{t("tag_placeholder")}">
+    <button class="act-btn act-btn-primary" onclick="applyTag()">{t("apply_tag")}</button>
   </div>
   <span id="action-feedback" role="status"></span>
 </div>
@@ -420,19 +411,25 @@ body.notes-off .r-body .ink-layer {{ display: none; }}
   <article id="corrected" class="paper">
     <header class="paper-head head-grid">
       <div class="head-info">
-        <div class="ph-row"><span><b>Module :</b> {exam_name}</span><span><b>Date :</b> {today}</span></div>
-        <div class="ph-row"><span>{n_q} QCM</span>{dur_html}</div>
+        <div class="ph-row">
+          <span><b>{i18n.label("module")}</b> {exam_name}</span>
+          <span><b>{i18n.label("date")}</b> {today}</span>
+        </div>
+        <div class="ph-row">
+          <span>{t("n_mcq", n=n_q)}</span>
+          {dur_html}
+        </div>
       </div>
       <div class="note-box">
-        <div class="note-label">Note</div>
-        <div class="note-val">{_fmt_score(score_20)}<small> / 20</small></div>
-        <div class="note-sub">{grade_label} · {_fmt_score(pct)} % · {_fmt_score(results["total_earned"])}/{_fmt_score(results["total_possible"])} pts</div>
+        <div class="note-label">{t("grade")}</div>
+        <div class="note-val">{i18n.fmt_num(score_20)}<small> / 20</small></div>
+        <div class="note-sub">{grade_label} · {i18n.fmt_pct(pct)} · {i18n.fmt_num(results["total_earned"])}/{i18n.fmt_num(results["total_possible"])} {t("pts")}</div>
       </div>
     </header>
     <div class="legend" aria-hidden="true">
-      <span><span class="ink">{PEN_SVG}</span>your answer</span>
-      <span><span class="lg-key">A</span>correct answer</span>
-      <span><span class="lg-bad">struck</span>wrong choice</span>
+      <span><span class="ink">{PEN_SVG}</span>{t("legend_yours")}</span>
+      <span><span class="lg-key">A</span>{t("legend_key")}</span>
+      <span><span class="lg-bad">{t("legend_struck")}</span>{t("legend_bad")}</span>
     </div>
     {q_blocks}
   </article>
@@ -442,6 +439,8 @@ body.notes-off .r-body .ink-layer {{ display: none; }}
 <script>{NOTES_JS}</script>
 <script>
 var NOTES = {notes_json};
+var T = {js_strings};
+function fill(text, vals) {{ return text.replace(/\\{{(\\w+)\\}}/g, function(m, k) {{ return k in vals ? vals[k] : m; }}); }}
 var pybridge = null;
 var FLAG_SVGS = {flag_svg_map};
 var currentFilter = 'all';
@@ -484,7 +483,7 @@ function toggleExpl(btn) {{
   var open = !body.hidden;
   body.hidden = open;
   btn.setAttribute('aria-expanded', String(!open));
-  btn.textContent = open ? 'Show explanation' : 'Hide explanation';
+  btn.textContent = open ? T.show_expl : T.hide_expl;
 }}
 
 function toggleRowSelection(event, rowIndex) {{
@@ -513,7 +512,7 @@ function filterRows(status) {{
 
 function refreshSelCount() {{
   var n = document.querySelectorAll('.q-check:checked').length;
-  document.getElementById('sel-count').textContent = n + ' selected';
+  document.getElementById('sel-count').textContent = fill(T.n_selected, {{n: n}});
   document.querySelectorAll('.r-q').forEach(function(q) {{
     var cb = q.querySelector('.q-check');
     if (cb) q.classList.toggle('row-selected', cb.checked);
@@ -548,23 +547,23 @@ function showFeedback(html) {{
 
 function applyFlag() {{
   var nids = getSelectedNids();
-  if (!nids.length) {{ showFeedback('Select at least one question first.'); return; }}
+  if (!nids.length) {{ showFeedback(T.need_selection); return; }}
   var flagNum = parseInt(document.getElementById('flag-select').value);
   if (pybridge) {{
     pybridge.flagNotes(JSON.stringify(nids), flagNum);
     var label = FLAG_SVGS[flagNum] || ('Flag ' + flagNum);
-    showFeedback(label + ' applied to ' + nids.length + ' card(s).');
+    showFeedback(fill(T.flag_applied, {{flag: label, n: nids.length}}));
   }}
 }}
 
 function applyTag() {{
   var nids = getSelectedNids();
-  if (!nids.length) {{ showFeedback('Select at least one question first.'); return; }}
+  if (!nids.length) {{ showFeedback(T.need_selection); return; }}
   var tag = document.getElementById('tag-input').value.trim();
-  if (!tag) {{ showFeedback('Type a tag name first.'); return; }}
+  if (!tag) {{ showFeedback(T.need_tag); return; }}
   if (pybridge) {{
     pybridge.tagNotes(JSON.stringify(nids), tag);
-    showFeedback('Tagged ' + nids.length + ' card(s): ' + tag);
+    showFeedback(fill(T.tagged, {{n: nids.length, tag: tag}}));
   }}
 }}
 
