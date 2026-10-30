@@ -22,7 +22,8 @@ def test_booklet_and_answer_sheet_layout(open_exam, questions):
     assert cols[1][:1] == ["Q21"] and cols[1][-1] == "Q40"
     assert js(view, "document.querySelector('#sheet .comb-label').textContent") == "Module"
     assert js(view, "document.querySelectorAll('#sheet .comb').length") == 1
-    assert "Date :" in js(view, "document.querySelector('#booklet .paper-head').textContent")
+    # wording per language is covered in test_i18n.py
+    assert "Date" in js(view, "document.querySelector('#booklet .paper-head').textContent")
     # 4-option questions show a disabled E box
     assert js(view, "!!document.querySelector('#grow-39 .box-na')")
 
@@ -139,7 +140,7 @@ def test_zoom_magnifies_without_rewrapping(open_exam, questions):
     assert js(view, "document.getElementById('zoom-pct').textContent") == "125%"
     assert abs(rect(view, "#booklet")[2] - w0 * 1.25) < 2
     assert js(view, "document.querySelector('#qblock-0 .q-header').offsetHeight") == before
-    assert float(js(view, "document.getElementById('sheet').style.zoom")) == 1.25
+    assert float(js(view, "getComputedStyle(document.getElementById('sheet')).zoom")) == 1
     key(view, Qt.Key.Key_Minus, "-", Qt.KeyboardModifier.ControlModifier)
     assert js(view, "document.getElementById('zoom-pct').textContent") == "110%"
     key(view, Qt.Key.Key_0, "0", Qt.KeyboardModifier.ControlModifier)
