@@ -2,7 +2,7 @@
 
 An Anki add-on that turns your MCQ note bank into a proper exam-style simulation workflow.
 
-Instead of reviewing questions one by one in normal Anki mode, you can build custom exams, filter your question pool, apply timing and scoring rules, sit the exam in a dedicated interface, and review your performance afterward.
+Instead of reviewing questions one by one in normal Anki mode, you can build custom exams, filter your question pool, apply timing and scoring rules, and sit the exam on a screen that looks like the real paper: a printed question booklet with a separate answer sheet you mark with a cross. Afterwards you get your booklet back, corrected in red pen.
 
 ## Why this exists
 
@@ -22,20 +22,24 @@ Exam Simulator - NB lets you:
 - run timed or untimed sessions
 - shuffle question order
 - apply different scoring systems
-- review detailed results question by question
+- highlight and write on the question booklet while you sit the exam
+- review a corrected copy of your booklet, question by question
 - flag or tag selected questions after the exam
 - keep simulation history locally without polluting normal Anki tags
 
 ## Screenshots
 
 ### Exam Setup
-![Exam setup](screenshots/launcher.png)
+![Exam setup window](screenshots/setup.png)
 
-### Exam Interface
-![Exam interface](screenshots/exam-interface.png)
+### The Exam: Question Booklet and Answer Sheet
+![Exam with the question booklet on the left and the answer sheet on the right](screenshots/exam.png)
 
-### Results Review
-![Results review](screenshots/results.png)
+### Highlighter and Pen
+![Highlights in three colours and pen marks on the booklet](screenshots/exam-notes.png)
+
+### Results: the Corrected Booklet
+![Corrected booklet with the mark out of 20, red-pen corrections and your notes](screenshots/results.png)
 
 ## Main Features
 
@@ -57,12 +61,28 @@ You can narrow the question pool using:
 The add-on supports balanced round-robin style sampling across subdecks so a single deck does not dominate the exam unnecessarily.
 
 ### Exam Interface
-- dedicated exam window
-- exam-paper style question layout
-- answer sheet grid on the side
-- timer support
-- zoom controls
-- quick navigation between answer sheet and questions
+- **Question booklet:** a printed-page layout in the style of a faculty MCQ paper (Module, Date, Durée header; numbered questions; `A:` options).
+- **Separate answer sheet:** blocks of 10 rows in two columns, like the real answer sheet. Click a box to mark it with a pen cross; click again to remove it. A small tick appears beside each question you have answered.
+- The booklet and the answer sheet scroll independently, so the sheet stays in view while you read.
+- Click a question number on the sheet to jump to that question in the booklet.
+- Timer, with a warning in the last 5 minutes and automatic submission when time runs out.
+
+### Highlighter, Pen and Zoom
+- **Highlighter** in yellow, green or pink: drag over text. Click a highlight to remove it.
+- **Pen** in blue or red: write or draw directly on the booklet.
+- **Eraser**, **Undo** and **Clear drawings**.
+- **Zoom** magnifies the whole page (70–200%) without re-flowing the text, so your marks stay on the right words. The answer sheet grows with it.
+- Your highlights and drawings last for the whole exam. A new exam starts clean.
+
+| Key | Action |
+|---|---|
+| `H` | Highlighter |
+| `P` | Pen |
+| `E` | Eraser |
+| `Esc` | Back to the pointer |
+| `Ctrl` + `Z` | Undo |
+| `Ctrl` + `+` / `Ctrl` + `−` | Zoom in / out |
+| `Ctrl` + `0` | Reset zoom |
 
 ### Scoring Modes
 - **All or Nothing**
@@ -70,12 +90,12 @@ The add-on supports balanced round-robin style sampling across subdecks so a sin
 - **Partial Negative -**
 
 ### Results Review
-After submission, the results page gives you:
-- overall score
-- score out of 20
-- percentage
-- correct / partial / wrong / skipped breakdown
-- per-question review
+After submission you get your booklet back, corrected:
+- your mark out of 20, percentage and points in a red **Note** box
+- your crosses in the margin, the correct answers circled in red, and wrong choices struck through
+- a red-pen mark and score beside every question: ✓ correct, ~ partial, ✗ wrong, — skipped
+- your highlights and drawings in the same places, with a **Show my notes** switch to hide them
+- filters for correct / partial / wrong / skipped
 - optional explanation reveal
 - bulk flagging and tagging for selected questions
 - quick launch for another exam
@@ -135,8 +155,8 @@ Mapping:
 5. Set the number of questions
 6. Name the exam if you want it saved in Simulation History
 7. Choose timing and scoring options
-8. Start the exam
-9. Submit and review results
+8. Start the exam and mark your answers on the answer sheet
+9. Submit and review the corrected booklet
 
 ## Scoring Modes
 
@@ -167,7 +187,8 @@ Important:
 
 After an exam, you can:
 
-- review each question
+- review each question on the corrected booklet
+- show or hide your highlights and drawings
 - reveal explanations
 - filter results by status
 - select specific questions
@@ -187,6 +208,8 @@ It does not require a server, account, or external backend.
 - best suited for note types that follow the expected field names
 - not intended to be a universal quiz engine for arbitrary note schemas
 - answer choice order is not currently randomized
+- text printed on the exam paper is in French (Module, Date, Durée, Consignes); buttons and menus are in English
+- highlights and drawings are not saved after you close the results window
 
 ## Roadmap
 
@@ -198,6 +221,17 @@ Potential future improvements:
 - richer analytics
 - exam presets
 - answer choice randomization
+
+## Tests
+
+The `tests/` folder runs the add-on against a real Anki collection and opens the real exam window (hidden). It covers scoring, note parsing, sampling, history, the setup and picker windows, the exam paper and its tools, and the results page.
+
+```sh
+python -m venv .venv && .venv/bin/pip install -r tests/requirements.txt
+.venv/bin/python -m pytest -c tests/pytest.ini tests
+```
+
+See [tests/README.md](tests/README.md) for details.
 
 ## License
 

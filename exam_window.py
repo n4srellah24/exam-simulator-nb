@@ -1,18 +1,22 @@
 """
 ExamWindow — split-panel exam interface.
 
-Left : scrollable exam-paper question sheet  (+/- zoom widget)
-Right: physical square answer grid (Q# × A B C D E, ✕ when selected)
-Top  : topbar with title, timer, submit button
+Left : scrollable printed question booklet on the desk  (+/- zoom widget)
+Right: separate answer sheet (blocks of 10 rows × A B C D E, pen ✕ when marked)
+Top  : topbar with title, progress, timer, submit button
 """
 
+import html
 import json
+from datetime import date
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWidgets import QMainWindow
 from aqt.qt import Qt
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from aqt import mw
+
+from .paper import NOTES_CSS, NOTES_JS, PAPER_CSS, PEN_SVG, comb_field, fmt_duration
 
 
 # ── Bridge ────────────────────────────────────────────────────────────────────
@@ -29,6 +33,13 @@ class _Bridge(QObject):
         except Exception:
             answers = {}
         self._win._on_submit(answers)
+
+    @pyqtSlot(str)
+    def saveNotes(self, notes_json: str):
+        try:
+            self._win._notes = json.loads(notes_json)
+        except Exception:
+            self._win._notes = {}
 
     @pyqtSlot()
     def timeUp(self):
@@ -70,6 +81,7 @@ class ExamWindow(QMainWindow):
         self.scoring       = scoring
         self.exam_name     = exam_name
         self.save_history  = save_history
+        self._notes        = {}
 
         self.setWindowTitle(
             f"Exam Simulator — {len(questions)} Questions  |  {exam_name}")
@@ -168,64 +180,105 @@ class ExamWindow(QMainWindow):
 
         results = compute_score(self.questions, answers_dict, self.scoring)
         results["exam_name"] = self.exam_name
+        results["timer_seconds"] = self.timer_seconds
+        results["notes"] = self._notes
         self._web.setHtml(build_results_html(results))
         self._rebind_webchannel()
 
     # ── HTML builders ─────────────────────────────────────────────────────────
 
     def _build_exam_html(self) -> str:
-        q_json  = json.dumps(self.questions, ensure_ascii=False)
+        # "</" would end the <script> early if a field contains "</script>"
+        q_json  = json.dumps(self.questions, ensure_ascii=False).replace("</", "<\\/")
         n       = len(self.questions)
         timer_s = self.timer_seconds
         hidden  = "hidden" if not timer_s else ""
+        name    = html.escape(self.exam_name)
+        today   = date.today().strftime("%d/%m/%Y")
+        dur     = fmt_duration(timer_s)
+        dur_html = f'<span><b>Durée :</b> {dur}</span>' if dur else ""
+
+        def swatch(kind, color, label):
+            return (f'<button class="sw sw-{color}" data-kind="{kind}" data-color="{color}" '
+                    f'onclick="pickColor(\'{kind}\',\'{color}\')" title="{label}" aria-label="{label}"></button>')
 
         return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Exam — {self.exam_name}</title>
-<style>{_EXAM_CSS}</style>
+<title>Exam — {name}</title>
+<style>{PAPER_CSS}{NOTES_CSS}{_EXAM_CSS}</style>
 </head>
-<body>
+<body data-tool="pointer">
 
 <!-- TOPBAR -->
 <div id="topbar">
-  <div id="exam-title">Exam &nbsp;·&nbsp; {n} Questions &nbsp;·&nbsp; {self.exam_name}</div>
+  <div id="exam-meta">
+    <span id="exam-title">{name}</span>
+    <span id="progress"><b id="ans-count">0</b> / {n} answered</span>
+  </div>
   <div id="timer-wrap" class="{hidden}"><span id="timer-text">--:--</span></div>
   <button id="submit-btn" onclick="askSubmit()">Submit Exam</button>
 </div>
 
 <!-- MAIN -->
 <div id="main">
-  <div id="left-panel">
-    <div id="zoom-ctrl">
-      <button class="zoom-btn" onclick="zoomIn()" title="Zoom in">＋</button>
-      <button class="zoom-btn" onclick="zoomOut()" title="Zoom out">－</button>
+  <div id="left-panel" class="desk">
+    <div id="tools" role="toolbar" aria-label="Booklet tools">
+      <div class="tgroup">
+        <button class="tool" data-tool="pointer" onclick="setTool('pointer', true)" title="Pointer (Esc)">{_ICONS["pointer"]}<span>Pointer</span></button>
+        <button class="tool" data-tool="hl" onclick="setTool('hl')" title="Highlighter (H)">{_ICONS["hl"]}<span>Highlight</span></button>
+        <span class="swatches">{swatch("hl", "yellow", "Yellow highlighter")}{swatch("hl", "green", "Green highlighter")}{swatch("hl", "pink", "Pink highlighter")}</span>
+        <button class="tool" data-tool="pen" onclick="setTool('pen')" title="Pen (P)">{_ICONS["pen"]}<span>Pen</span></button>
+        <span class="swatches">{swatch("pen", "blue", "Blue pen")}{swatch("pen", "red", "Red pen")}</span>
+        <button class="tool" data-tool="eraser" onclick="setTool('eraser')" title="Eraser (E)">{_ICONS["eraser"]}<span>Eraser</span></button>
+      </div>
+      <div class="tgroup">
+        <button class="tool" onclick="undo()" title="Undo (Ctrl Z)">{_ICONS["undo"]}<span>Undo</span></button>
+        <button class="tool" onclick="clearDrawings()" title="Remove all pen drawings">{_ICONS["clear"]}<span>Clear drawings</span></button>
+      </div>
+      <div class="tgroup zoom">
+        <button class="tool tool-sq" onclick="zoomOut()" title="Zoom out (Ctrl −)" aria-label="Zoom out">{_ICONS["minus"]}</button>
+        <button class="tool" id="zoom-pct" onclick="resetZoom()" title="Reset zoom (Ctrl 0)">100%</button>
+        <button class="tool tool-sq" onclick="zoomIn()" title="Zoom in (Ctrl +)" aria-label="Zoom in">{_ICONS["plus"]}</button>
+      </div>
     </div>
-    <div id="questions-container"></div>
+    <div id="booklet-sizer">
+      <article id="booklet" class="paper">
+        <header class="paper-head">
+          <div class="ph-row"><span><b>Module :</b> {name}</span><span><b>Date :</b> {today}</span></div>
+          <div class="ph-row"><span>{n} QCM</span>{dur_html}</div>
+        </header>
+        <div id="questions-container"></div>
+        <svg id="ink-layer" class="ink-layer" style="width:100%;height:100%"></svg>
+      </article>
+    </div>
   </div>
-  <div id="right-panel">
-    <div id="grid-header-row">
-      <span id="grid-title">ANSWER SHEET</span>
-      <span id="progress">Done: <b id="ans-count">0</b>/{n}</span>
-    </div>
-    <div id="grid-scroll">
-      <table id="answer-grid">
-        <thead id="grid-head"></thead>
-        <tbody id="grid-body"></tbody>
-      </table>
-    </div>
+  <div id="right-panel" class="desk">
+    <section id="sheet" class="paper" aria-label="Answer sheet">
+      <div class="sheet-head">
+        <div class="sheet-fields">
+          {comb_field("Module", self.exam_name.upper(), 18)}
+        </div>
+        <div class="sheet-rules">
+          <b>Consignes</b>
+          <p>Cochez d'une croix la ou les réponse(s) juste(s) dans la case correspondante.</p>
+          <p class="ex">Exemple : <span class="box box-on">{PEN_SVG}</span></p>
+        </div>
+      </div>
+      <div id="sheet-grid"></div>
+    </section>
   </div>
 </div>
 
 <!-- Custom confirm modal -->
 <div id="modal-overlay" style="display:none;">
-  <div id="modal-box">
-    <div id="modal-title">Confirmation</div>
+  <div id="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div id="modal-title"></div>
     <div id="modal-msg"></div>
     <div id="modal-btns">
-      <button id="modal-cancel" onclick="modalCancel()">Cancel</button>
-      <button id="modal-ok"     onclick="modalOk()">Submit anyway</button>
+      <button id="modal-cancel" onclick="modalCancel()"></button>
+      <button id="modal-ok"     onclick="modalOk()"></button>
     </div>
   </div>
 </div>
@@ -237,87 +290,104 @@ class ExamWindow(QMainWindow):
 const QUESTIONS     = {q_json};
 const TIMER_SECONDS = {timer_s};
 const N             = QUESTIONS.length;
+const PEN           = '{PEN_SVG}';
 
 let pybridge      = null;
 let answers       = {{}};
 let timerLeft     = TIMER_SECONDS;
 let timerInterval = null;
-let fontSize      = 14;
 let _modalResolve = null;
 
 new QWebChannel(qt.webChannelTransport, ch => {{
   pybridge = ch.objects.pybridge || null;
 }});
 
-/* ── Questions ──────────────────────────────────────────────────────────── */
+/* ── Booklet ────────────────────────────────────────────────────────────── */
 function renderQuestions() {{
   const c = document.getElementById("questions-container");
   QUESTIONS.forEach((q, i) => {{
     const block = document.createElement("div");
-    block.className = "q-block";
-    block.id        = "qblock-" + i;
+    block.className  = "q-block";
+    block.id         = "qblock-" + i;
+    block.dataset.qi = i;
     let opts = "";
     for (const [l, t] of Object.entries(q.options))
-      opts += `<div class="q-opt"><span class="opt-letter">${{l}}.</span><span class="opt-text">${{t}}</span></div>`;
-    const src = q.source ? `<div class="q-source">Source: ${{q.source}}</div>` : "";
+      opts += `<div class="q-opt"><span class="opt-letter">${{l}}:</span><span class="opt-text" data-part="${{l}}">${{t}}</span></div>`;
+    const src = q.source ? `<div class="q-source">Source : ${{q.source}}</div>` : "";
     block.innerHTML = `
       <div class="q-header">
-        <span class="q-num">${{i+1}}.</span>
-        <span class="q-text">${{q.question}}</span>
+        <span class="q-num">${{i+1}}</span>
+        <span class="q-text" data-part="Q">${{q.question}}</span>
       </div>
       <div class="q-opts">${{opts}}</div>${{src}}`;
     c.appendChild(block);
   }});
 }}
 
-/* ── Grid ───────────────────────────────────────────────────────────────── */
+/* ── Answer sheet: blocks of 10, first half down the left column ────────── */
+const TICK = '<svg class="tick" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.6l2.6 2.6L10 3.2"/></svg>';
+
 function renderGrid() {{
-  const ALL = ["A","B","C","D","E"];
+  const ALL  = ["A","B","C","D","E"];
   const used = new Set();
   QUESTIONS.forEach(q => Object.keys(q.options).forEach(l => used.add(l)));
   const cols = ALL.filter(l => used.has(l));
 
-  document.getElementById("grid-head").innerHTML =
-    "<tr><th class='th-num'></th>" + cols.map(l=>`<th>${{l}}</th>`).join("") + "</tr>";
+  const nBlocks = Math.ceil(N / 10);
+  const nLeft   = Math.ceil(nBlocks / 2);
+  const grid    = document.getElementById("sheet-grid");
+  const colEls  = [document.createElement("div"), document.createElement("div")];
+  colEls.forEach(el => {{ el.className = "sheet-col"; grid.appendChild(el); }});
 
-  const tbody = document.getElementById("grid-body");
-  QUESTIONS.forEach((q, i) => {{
-    const tr = document.createElement("tr");
-    tr.id = "grow-" + i;
-    let cells = `<td class="td-num" onclick="scrollToQ(${{i}})" title="Jump to Q${{i+1}}">Q${{i+1}}</td>`;
-    cols.forEach(l => {{
-      if (q.options[l] !== undefined)
-        cells += `<td><div class="box" id="b-${{i}}-${{l}}" onclick="toggle(${{i}},'${{l}}')"></div></td>`;
-      else
-        cells += `<td><div class="box box-na"></div></td>`;
-    }});
-    tr.innerHTML = cells;
-    tbody.appendChild(tr);
-  }});
+  for (let b = 0; b < nBlocks; b++) {{
+    let rows = "";
+    for (let i = b * 10; i < Math.min(N, b * 10 + 10); i++) {{
+      const q = QUESTIONS[i];
+      let cells = `<th class="qlabel" scope="row" onclick="scrollToQ(${{i}})" title="Go to question ${{i+1}}">${{TICK}}Q${{i+1}}</th>`;
+      cols.forEach(l => {{
+        cells += q.options[l] !== undefined
+          ? `<td><span class="box" id="b-${{i}}-${{l}}" role="checkbox" aria-checked="false" aria-label="Q${{i+1}} ${{l}}" tabindex="0" onclick="toggle(${{i}},'${{l}}')" onkeydown="boxKey(event,${{i}},'${{l}}')"></span></td>`
+          : `<td><span class="box box-na" aria-hidden="true"></span></td>`;
+      }});
+      rows += `<tr id="grow-${{i}}">${{cells}}</tr>`;
+    }}
+    const head = "<tr><th></th>" + cols.map(l => `<th scope="col">${{l}}</th>`).join("") + "</tr>";
+    const table = document.createElement("table");
+    table.className = "block";
+    table.innerHTML = `<thead>${{head}}</thead><tbody>${{rows}}</tbody>`;
+    colEls[b < nLeft ? 0 : 1].appendChild(table);
+  }}
 }}
 
 function toggle(qi, l) {{
   if (!answers[qi]) answers[qi] = new Set();
   const s  = answers[qi];
   const el = document.getElementById(`b-${{qi}}-${{l}}`);
-  if (s.has(l)) {{ s.delete(l); el.classList.remove("box-on"); el.textContent = ""; }}
-  else          {{ s.add(l);    el.classList.add("box-on");    el.textContent = "✕"; }}
-  const numCell = document.querySelector(`#grow-${{qi}} .td-num`);
-  if (numCell) numCell.classList.toggle("td-done", s.size > 0);
+  if (s.has(l)) {{
+    s.delete(l); el.classList.remove("box-on"); el.innerHTML = "";
+  }} else {{
+    s.add(l); el.classList.add("box-on");
+    el.innerHTML = PEN;
+    // a hand never draws the same cross twice
+    el.firstChild.style.transform = `rotate(${{((qi * 7 + l.charCodeAt(0) * 3) % 11) - 5}}deg) scale(1.12)`;
+  }}
+  el.setAttribute("aria-checked", s.has(l) ? "true" : "false");
+  document.getElementById("grow-" + qi).classList.toggle("row-done", s.size > 0);
   document.getElementById("ans-count").textContent =
     Object.values(answers).filter(s=>s&&s.size>0).length;
 }}
 
-function scrollToQ(i) {{
-  const el = document.getElementById("qblock-"+i);
-  if (el) el.scrollIntoView({{behavior:"smooth",block:"start"}});
+function boxKey(e, qi, l) {{
+  if (e.key === " " || e.key === "Enter") {{ e.preventDefault(); toggle(qi, l); }}
 }}
 
-/* ── Zoom ───────────────────────────────────────────────────────────────── */
-function zoomIn()  {{ fontSize = Math.min(fontSize + 2, 26); applyZoom(); }}
-function zoomOut() {{ fontSize = Math.max(fontSize - 2,  9); applyZoom(); }}
-function applyZoom() {{
-  document.getElementById("questions-container").style.fontSize = fontSize + "px";
+function scrollToQ(i) {{
+  const el = document.getElementById("qblock-"+i);
+  if (!el) return;
+  el.scrollIntoView({{behavior:"smooth",block:"start"}});
+  el.classList.remove("q-target");
+  void el.offsetWidth;
+  el.classList.add("q-target");
 }}
 
 /* ── Timer ──────────────────────────────────────────────────────────────── */
@@ -338,13 +408,18 @@ function renderTimer() {{
 }}
 
 /* ── Custom confirm modal ───────────────────────────────────────────────── */
-function showModal(msg) {{
+function showModal(title, msg, okLabel, cancelLabel) {{
   return new Promise(resolve => {{
     _modalResolve = resolve;
-    document.getElementById("modal-msg").textContent = msg;
+    document.getElementById("modal-title").textContent  = title;
+    document.getElementById("modal-msg").textContent    = msg;
+    document.getElementById("modal-ok").textContent     = okLabel;
+    document.getElementById("modal-cancel").textContent = cancelLabel;
     document.getElementById("modal-overlay").style.display = "flex";
+    document.getElementById("modal-cancel").focus();
   }});
 }}
+function modalOpen()   {{ return document.getElementById("modal-overlay").style.display !== "none"; }}
 function modalOk()     {{ document.getElementById("modal-overlay").style.display="none"; if(_modalResolve) _modalResolve(true);  }}
 function modalCancel() {{ document.getElementById("modal-overlay").style.display="none"; if(_modalResolve) _modalResolve(false); }}
 
@@ -352,7 +427,9 @@ async function askSubmit() {{
   const done      = Object.values(answers).filter(s=>s&&s.size>0).length;
   const remaining = N - done;
   if (remaining > 0) {{
-    const ok = await showModal(`${{remaining}} question(s) still unanswered. Submit anyway?`);
+    const ok = await showModal("Submit your paper?",
+      `${{remaining}} question(s) still have no answer marked on the sheet.`,
+      "Submit anyway", "Keep answering");
     if (!ok) return;
   }}
   doSubmit();
@@ -367,166 +444,441 @@ function doSubmit() {{
   }});
   document.getElementById("submit-btn").disabled    = true;
   document.getElementById("submit-btn").textContent = "Grading…";
-  if (pybridge) pybridge.submitExam(JSON.stringify(payload));
+  if (pybridge) {{
+    pybridge.saveNotes(JSON.stringify(notesPayload()));
+    pybridge.submitExam(JSON.stringify(payload));
+  }}
 }}
-
+</script>
+<script>{NOTES_JS}{_TOOLS_JS}</script>
+<script>
 renderQuestions();
 renderGrid();
+initTools();
 startTimer();
 </script>
 </body>
 </html>"""
 
 
+# ── Toolbar icons: one 16px, 1.6 stroke family ───────────────────────────────
+
+def _icon(d: str) -> str:
+    return (f'<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="{d}"/></svg>')
+
+
+_ICONS = {
+    "pointer": _icon("M4 2.5v10l2.8-2.6 1.9 4.1 1.7-.8-1.9-4h3.8z"),
+    "hl":      _icon("M9.8 2.6l3.6 3.6-5.6 5.6H4.2V8.2zM2.5 14h7"),
+    "pen":     _icon("M11.2 2.6l2.2 2.2-7.6 7.6-3 .8.8-3zM9.6 4.2l2.2 2.2"),
+    "eraser":  _icon("M6.2 13.2L2.8 9.8l6.6-6.6 4.4 4.4-6 5.6M6.2 13.2h7.3M5.4 7.2l4.4 4.4"),
+    "undo":    _icon("M5.5 6.5h5a3 3 0 010 6H7.5M5.5 6.5L8 4M5.5 6.5L8 9"),
+    "clear":   _icon("M3 4.6h10M6.2 4.6V3h3.6v1.6M4.4 4.6l.7 8.6h5.8l.7-8.6"),
+    "minus":   _icon("M4 8h8"),
+    "plus":    _icon("M4 8h8M8 4v8"),
+}
+
+
+# ── Booklet tools: highlighter, pen, eraser, undo, zoom (plain string) ───────
+
+_TOOLS_JS = r"""
+let tool = "pointer", hlColor = "yellow", penColor = "blue";
+let highlights = [], strokes = [], undoStack = [], nextId = 1;
+const ZOOMS = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+let zoomIdx = 3;
+
+const booklet = () => document.getElementById("booklet");
+const layer   = () => document.getElementById("ink-layer");
+
+function setTool(t, force) {
+  if (!force && t === tool) t = "pointer";   // clicking the active tool puts it down
+  tool = t;
+  document.body.dataset.tool = t;
+  document.body.dataset.hl = hlColor;
+  document.querySelectorAll(".tool[data-tool]").forEach(b => {
+    const on = b.dataset.tool === t;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  document.querySelectorAll(".sw").forEach(b => {
+    const cur = b.dataset.kind === "hl" ? hlColor : penColor;
+    b.classList.toggle("picked", b.dataset.color === cur);
+  });
+  if (t !== "hl") window.getSelection().removeAllRanges();
+}
+
+function pickColor(kind, color) {
+  if (kind === "hl") hlColor = color; else penColor = color;
+  setTool(kind, true);
+}
+
+function notesPayload() {
+  return {highlights: highlights, strokes: strokes};
+}
+
+function undo() {
+  const fn = undoStack.pop();
+  if (fn) fn();
+}
+
+/* Highlighter */
+function repaint(list) {
+  const seen = new Set();
+  list.forEach(h => {
+    const key = h.q + ":" + h.part;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const el = document.querySelector(`#qblock-${h.q} [data-part="${h.part}"]`);
+    if (el) paintHighlights(el, highlights.filter(x => x.q === h.q && x.part === h.part));
+  });
+}
+
+function onHighlightUp() {
+  if (tool !== "hl") return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return;
+  const range = sel.getRangeAt(0);
+  const added = [];
+  booklet().querySelectorAll("[data-part]").forEach(el => {
+    if (!range.intersectsNode(el)) return;
+    const start = el.contains(range.startContainer) ? textOffset(el, range.startContainer, range.startOffset) : 0;
+    const end   = el.contains(range.endContainer)   ? textOffset(el, range.endContainer, range.endOffset) : el.textContent.length;
+    if (end > start)
+      added.push({id: nextId++, q: +el.closest("[data-qi]").dataset.qi, part: el.dataset.part, start, end, color: hlColor});
+  });
+  sel.removeAllRanges();
+  if (!added.length) return;
+  highlights.push(...added);
+  repaint(added);
+  undoStack.push(() => { highlights = highlights.filter(h => !added.includes(h)); repaint(added); });
+}
+
+function onHighlightClick(e) {
+  if (tool !== "hl" || !window.getSelection().isCollapsed) return;
+  const m = e.target.closest("mark.hl");
+  if (!m) return;
+  const h = highlights.find(x => x.id === +m.dataset.hid);
+  if (!h) return;
+  highlights = highlights.filter(x => x !== h);
+  repaint([h]);
+  undoStack.push(() => { highlights.push(h); repaint([h]); });
+}
+
+/* Pen + eraser: strokes are stored relative to their question block so the
+   results page can redraw them on the same words. */
+function toLocal(e) {
+  const pt = layer().createSVGPoint();
+  pt.x = e.clientX; pt.y = e.clientY;
+  const p = pt.matrixTransform(layer().getScreenCTM().inverse());
+  return [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+}
+
+function blockAt(y) {
+  const blocks = document.querySelectorAll(".q-block");
+  let b = blocks[0];
+  blocks.forEach(el => { if (el.offsetTop <= y) b = el; });
+  return b;
+}
+
+function absPoints(s) {
+  const b = document.getElementById("qblock-" + s.q);
+  return s.pts.map(([x, y]) => [x + b.offsetLeft, y + b.offsetTop]);
+}
+
+function drawStroke(s) {
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("class", "ink-" + s.color);
+  path.setAttribute("d", inkPath(absPoints(s)));
+  path.dataset.sid = s.id;
+  layer().appendChild(path);
+}
+
+function removeStroke(s) {
+  strokes = strokes.filter(x => x !== s);
+  const el = layer().querySelector(`[data-sid="${s.id}"]`);
+  if (el) el.remove();
+}
+
+let live = null;
+
+// Distance from point p to segment ab.
+function segDist(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2)) : 0;
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+// Erase every stroke within reach of the pointer's path from `from` to `to`.
+// A fast swipe moves many pixels between events, so test the whole path.
+function eraseAlong(from, to) {
+  const steps = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 3));
+  const path = [];
+  for (let i = 0; i <= steps; i++)
+    path.push([from[0] + (to[0] - from[0]) * i / steps, from[1] + (to[1] - from[1]) * i / steps]);
+  strokes.filter(s => {
+    const pts = absPoints(s);
+    return path.some(p => pts.length === 1
+      ? Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]) < 8
+      : pts.slice(1).some((q, i) => segDist(p, pts[i], q) < 8));
+  }).forEach(s => {
+    removeStroke(s);
+    undoStack.push(() => { strokes.push(s); drawStroke(s); });
+  });
+}
+
+function onInkDown(e) {
+  if (tool !== "pen" && tool !== "eraser") return;
+  e.preventDefault();
+  layer().setPointerCapture(e.pointerId);
+  const p = toLocal(e);
+  if (tool === "eraser") { live = {erasing: true, last: p}; eraseAlong(p, p); return; }
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("class", "ink-" + penColor);
+  layer().appendChild(path);
+  live = {pts: [p], path: path, color: penColor};
+  path.setAttribute("d", inkPath(live.pts));
+}
+
+function onInkMove(e) {
+  if (!live) return;
+  const p = toLocal(e);
+  if (live.erasing) { eraseAlong(live.last, p); live.last = p; return; }
+  const last = live.pts[live.pts.length - 1];
+  if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 1.2) return;
+  live.pts.push(p);
+  live.path.setAttribute("d", inkPath(live.pts));
+}
+
+function onInkUp() {
+  if (!live) return;
+  const done = live;
+  live = null;
+  if (done.erasing) return;
+  const b = blockAt(done.pts[0][1]);
+  const s = {
+    id: nextId++, q: +b.dataset.qi, color: done.color,
+    pts: done.pts.map(([x, y]) => [Math.round((x - b.offsetLeft) * 10) / 10, Math.round((y - b.offsetTop) * 10) / 10]),
+  };
+  done.path.dataset.sid = s.id;
+  strokes.push(s);
+  undoStack.push(() => removeStroke(s));
+}
+
+async function clearDrawings() {
+  if (!strokes.length) return;
+  const ok = await showModal("Clear all drawings?",
+    "This removes every pen stroke on the booklet. Your highlights stay.",
+    "Clear drawings", "Cancel");
+  if (!ok) return;
+  const removed = strokes.slice();
+  removed.forEach(removeStroke);
+  undoStack.push(() => removed.forEach(s => { strokes.push(s); drawStroke(s); }));
+}
+
+/* Zoom: magnify the whole booklet (no re-wrapping, drawings stay put) */
+function applyZoom() {
+  const z = ZOOMS[zoomIdx];
+  const panel = document.getElementById("left-panel");
+  const ratio = panel.scrollTop / Math.max(1, panel.scrollHeight);
+  const bk = booklet();
+  bk.style.transform = `scale(${z})`;
+  const sizer = document.getElementById("booklet-sizer");
+  sizer.style.width  = (bk.offsetWidth * z) + "px";
+  sizer.style.height = (bk.offsetHeight * z) + "px";
+  document.getElementById("sheet").style.zoom = Math.min(z, 1.5);
+  document.getElementById("zoom-pct").textContent = Math.round(z * 100) + "%";
+  panel.scrollTop = ratio * panel.scrollHeight;
+}
+function zoomIn()    { zoomIdx = Math.min(zoomIdx + 1, ZOOMS.length - 1); applyZoom(); }
+function zoomOut()   { zoomIdx = Math.max(zoomIdx - 1, 0); applyZoom(); }
+function resetZoom() { zoomIdx = 3; applyZoom(); }
+
+function onKey(e) {
+  if (modalOpen()) { if (e.key === "Escape") modalCancel(); return; }
+  if (e.target.closest("input, textarea, select")) return;
+  if (e.ctrlKey || e.metaKey) {
+    const k = e.key.toLowerCase();
+    if (k === "z")                  { e.preventDefault(); undo(); }
+    else if (k === "+" || k === "=") { e.preventDefault(); zoomIn(); }
+    else if (k === "-")             { e.preventDefault(); zoomOut(); }
+    else if (k === "0")             { e.preventDefault(); resetZoom(); }
+    return;
+  }
+  if (e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "h") setTool("hl");
+  else if (k === "p") setTool("pen");
+  else if (k === "e") setTool("eraser");
+  else if (e.key === "Escape") setTool("pointer", true);
+}
+
+function initTools() {
+  const bk = booklet();
+  bk.addEventListener("mouseup", onHighlightUp);
+  bk.addEventListener("click", onHighlightClick);
+  const ly = layer();
+  ly.addEventListener("pointerdown", onInkDown);
+  ly.addEventListener("pointermove", onInkMove);
+  ly.addEventListener("pointerup", onInkUp);
+  ly.addEventListener("pointercancel", onInkUp);
+  document.addEventListener("keydown", onKey);
+  setTool("pointer", true);
+  applyZoom();
+}
+"""
+
+
 # ── CSS (plain string — no f-string, single braces are fine) ─────────────────
 
 _EXAM_CSS = """
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
-body {
-  font-family: "Times New Roman", Times, serif;
-  font-size: 14px;
-  background: #e8e8e8;
-  color: #000;
-  display: flex;
-  flex-direction: column;
-}
 #main { display: flex; flex: 1; overflow: hidden; }
 
 /* Topbar */
 #topbar {
   position: relative;
   display: flex; align-items: center; justify-content: space-between;
-  background: #1e293b; color: #fff;
+  background: var(--bar); color: var(--bar-ink);
   padding: 10px 24px; flex-shrink: 0; gap: 16px;
-  font-family: Arial, sans-serif;
 }
-#exam-title { font-size: 13px; font-weight: bold; letter-spacing: .5px; text-transform: uppercase; }
+#exam-meta { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+#exam-title { font-size: 14px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#progress { font-size: 12px; color: var(--bar-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+#progress b { color: var(--bar-ink); }
 #timer-wrap {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  font-size: 22px; font-weight: bold; font-family: monospace;
+  font-size: 22px; font-weight: bold; font-variant-numeric: tabular-nums;
   color: #7dd3fc; min-width: 90px; text-align: center;
 }
 #timer-wrap.hidden { visibility: hidden; }
 #timer-wrap.timer-warn { color: #f87171; animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: .4; } }
 #submit-btn {
-  background: #2563eb; color: #fff; border: none;
+  background: var(--accent); color: #fff; border: none; border-radius: 4px;
   padding: 8px 20px; font-size: 13px; font-weight: bold;
-  cursor: pointer; font-family: Arial, sans-serif;
-  text-transform: uppercase; letter-spacing: .5px;
+  cursor: pointer; font-family: inherit;
 }
-#submit-btn:hover    { background: #1d4ed8; }
+#submit-btn:hover    { background: var(--accent-hover); }
 #submit-btn:disabled { background: #64748b; cursor: default; }
 
-/* Left panel */
-#left-panel {
-  flex: 3; overflow-y: auto; position: relative;
-  padding: 36px 48px 48px; background: #fff; border-right: 1px solid #bbb;
+/* Booklet side */
+#left-panel { flex: 1; overflow: auto; position: relative; padding: 0 32px 48px; min-width: 0; }
+#booklet-sizer { margin: 0 auto; }
+#booklet {
+  position: relative; width: 820px; transform-origin: 0 0;
+  padding: 52px 64px 64px; font-size: 15px;
 }
 
-/* Zoom widget */
-#zoom-ctrl {
-  position: sticky; top: 8px; float: right;
-  display: flex; flex-direction: column; gap: 4px;
-  z-index: 20; margin-left: 12px;
+/* Booklet tools */
+#tools {
+  position: sticky; top: 0; left: 0; z-index: 30;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 18px;
+  margin: 0 -32px 20px; padding: 10px 16px;
+  background: var(--desk); border-bottom: 1px solid #bdbab2;
 }
-.zoom-btn {
-  width: 28px; height: 28px;
-  background: #f1f5f9; border: 1px solid #cbd5e1;
-  border-radius: 4px; font-size: 16px; font-weight: bold;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  font-family: Arial, sans-serif; line-height: 1; color: #1e293b;
-  box-shadow: 0 1px 3px rgba(0,0,0,.1);
+.tgroup { display: flex; align-items: center; gap: 4px; }
+.tool {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  background: #ecebe7; border: 1px solid #b9b6ae; border-radius: 4px; color: var(--desk-ink);
+  font: 13px Arial, sans-serif; cursor: pointer;
 }
-.zoom-btn:hover { background: #dbeafe; border-color: #2563eb; }
+.tool:hover { background: #fff; }
+.tool.active { background: var(--print); border-color: var(--print); color: #fff; }
+.tool-sq { width: 32px; padding: 0; justify-content: center; }
+#zoom-pct { min-width: 58px; justify-content: center; font-variant-numeric: tabular-nums; }
+.ic { width: 16px; height: 16px; flex-shrink: 0; }
+.ic path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.swatches { display: inline-flex; gap: 3px; margin: 0 8px 0 2px; }
+.sw {
+  width: 20px; height: 20px; border-radius: 50%; border: 1px solid rgba(0,0,0,.25);
+  cursor: pointer; padding: 0;
+}
+.sw.picked { box-shadow: 0 0 0 2px var(--desk), 0 0 0 4px var(--desk-ink); }
+.sw-yellow { background: #fff27a; }
+.sw-green  { background: #b4f0c4; }
+.sw-pink   { background: #ffc4e1; }
+.sw-blue   { background: #1f3a93; }
+.sw-red    { background: #d0302a; }
 
-/* Question blocks */
-.q-block {
-  margin-bottom: 28px; padding-bottom: 22px; border-bottom: 1px solid #ddd;
-}
-.q-block:last-child { border-bottom: none; }
-.q-header { display: flex; gap: 8px; margin-bottom: 10px; line-height: 1.6; }
-.q-num  { font-weight: bold; font-size: 1em; flex-shrink: 0; padding-top: 1px; }
-.q-text { font-size: 1em; font-weight: bold; line-height: 1.65; }
-.q-opts { display: flex; flex-direction: column; gap: 3px; padding-left: 22px; }
-.q-opt  { display: flex; gap: 8px; font-size: .96em; line-height: 1.6; }
-.opt-letter { font-weight: bold; flex-shrink: 0; min-width: 18px; }
-.opt-text   { color: #111; }
-.q-source   { margin-top: 10px; padding-left: 22px; font-size: .85em; font-style: italic; color: #555; }
+/* Tool modes */
+body[data-tool="hl"] #booklet { cursor: text; }
+body[data-tool="hl"][data-hl="yellow"] #booklet ::selection { background: #fff27a; }
+body[data-tool="hl"][data-hl="green"]  #booklet ::selection { background: #b4f0c4; }
+body[data-tool="hl"][data-hl="pink"]   #booklet ::selection { background: #ffc4e1; }
+body[data-tool="hl"] mark.hl { cursor: pointer; }
+body[data-tool="pen"] #ink-layer,
+body[data-tool="eraser"] #ink-layer { pointer-events: all; cursor: crosshair; touch-action: none; }
+body[data-tool="eraser"] #ink-layer { cursor: cell; }
+#ink-layer { z-index: 5; }
 
-/* Right panel / answer grid */
+/* Answer sheet side */
+/* A strip of desk and a rule always separate the sheet from the booklet,
+   even when the zoomed booklet is wider than its panel. */
 #right-panel {
-  flex: 0 0 280px; min-width: 240px; max-width: 340px;
-  background: #f5f5f0; display: flex; flex-direction: column;
-  padding: 14px 10px 10px; gap: 6px; font-family: Arial, sans-serif;
-  border-left: 2px solid #999;
+  flex: 0 0 auto; overflow: auto; padding: 72px 22px 48px 24px;
+  border-left: 1px solid #a9a69e;
 }
-#grid-header-row {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 0 4px 4px; border-bottom: 2px solid #333; margin-bottom: 2px;
+#sheet { width: 432px; padding: 22px 20px 36px; }
+.sheet-head { border-bottom: 1.5px solid var(--rule); padding-bottom: 12px; margin-bottom: 24px; }
+.sheet-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.comb { display: flex; align-items: center; gap: 8px; }
+.comb-label { width: 48px; font-size: 11px; color: var(--print-soft); text-align: right; flex-shrink: 0; }
+.cells { display: flex; align-items: center; }
+.cell {
+  width: 15px; height: 18px; border: 1px solid #6b6b6b; margin-left: -1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: bold 11px/1 Arial, sans-serif; color: var(--pen);
 }
-#grid-title   { font-size: 11px; font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; color: #333; }
-#progress     { font-size: 11px; color: #555; }
-#grid-scroll  { flex: 1; overflow-y: auto; }
-#answer-grid  { width: 100%; border-collapse: collapse; font-size: 12px; font-family: Arial, sans-serif; }
-#answer-grid thead th {
-  background: #333; color: #fff; padding: 5px 0; text-align: center;
-  font-size: 12px; font-weight: bold; position: sticky; top: 0; z-index: 5;
-  border: 1px solid #555;
+.sheet-rules {
+  border: 1px solid #6b6b6b; padding: 8px 10px;
+  font-size: 12px; line-height: 1.45; color: #333;
 }
-.th-num { width: 38px; }
-#answer-grid tbody tr { border-bottom: 1px solid #ccc; }
-#answer-grid tbody td { padding: 2px 3px; text-align: center; border: 1px solid #ccc; }
-.td-num {
-  font-size: 11px; font-weight: bold; color: #444;
-  cursor: pointer; user-select: none; background: #eee; white-space: nowrap;
+.sheet-rules b { display: block; margin-bottom: 2px; font-size: 12px; color: var(--print); }
+.sheet-rules .ex { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+
+#sheet-grid { display: flex; justify-content: space-between; gap: 18px; }
+.sheet-col { display: flex; flex-direction: column; gap: 26px; }
+.block { border: 1.5px solid var(--rule); border-collapse: collapse; font-size: 12px; }
+.block thead th {
+  background: var(--head-fill); font-size: 12px; font-weight: bold;
+  padding: 2px 0; text-align: center; border-bottom: 1px solid var(--rule);
 }
-.td-num:hover { color: #2563eb; background: #dbeafe; }
-.td-done      { color: #15803d !important; background: #dcfce7 !important; }
+.block td { padding: 3px 2px; text-align: center; }
+.block tbody tr:first-child td, .block tbody tr:first-child th { padding-top: 6px; }
+.block tbody tr:last-child td, .block tbody tr:last-child th { padding-bottom: 6px; }
+.qlabel {
+  padding: 3px 6px 3px 4px; text-align: left; font-weight: normal;
+  white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums;
+}
+.qlabel:hover { text-decoration: underline; text-underline-offset: 2px; }
+.tick { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; visibility: hidden; }
+.tick path { fill: none; stroke: #6f6f6f; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.row-done .tick { visibility: visible; }
 .box {
-  width: 22px; height: 22px; border: 1.5px solid #444;
-  background: #fff; margin: 0 auto; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px; font-weight: bold; color: #111;
-  user-select: none; line-height: 1;
+  width: 22px; height: 22px; border: 1.4px solid var(--rule); background: var(--paper);
+  display: inline-flex; vertical-align: middle; cursor: pointer; padding: 0;
 }
-.box:hover { background: #dbeafe; border-color: #2563eb; }
-.box-on {
-  background: #dbeafe !important;
-  border: 2px solid #1d4ed8 !important;
-  color: #0f172a !important;
-  box-shadow: inset 0 0 0 2px rgba(29,78,216,.18), 0 0 0 1px rgba(29,78,216,.14);
-}
-.box-na    { background: #e5e5e5 !important; border-color: #bbb !important; cursor: default; opacity:.5; }
-.box-na:hover { background: #e5e5e5 !important; border-color: #bbb !important; }
+.box:hover { background: #eef1fb; }
+.box-na { border-color: #c4c4c4; background: #f2f2f2; cursor: default; }
+.box-na:hover { background: #f2f2f2; }
+.sheet-rules .box { width: 18px; height: 18px; cursor: default; }
 
 /* Custom confirm modal */
 #modal-overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.45);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 1000;
+  position: fixed; inset: 0; background: rgba(20,20,20,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
 }
 #modal-box {
-  background: #fff; border-radius: 10px;
-  padding: 28px 32px; min-width: 320px; max-width: 420px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.25);
-  font-family: Arial, sans-serif;
+  background: var(--paper); border-radius: 6px;
+  padding: 26px 30px; min-width: 320px; max-width: 420px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.28);
 }
-#modal-title {
-  font-size: 16px; font-weight: bold; margin-bottom: 12px; color: #1e293b;
-}
-#modal-msg { font-size: 14px; color: #334155; margin-bottom: 22px; line-height: 1.5; }
+#modal-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; }
+#modal-msg { font-size: 14px; color: #333; margin-bottom: 22px; line-height: 1.5; }
 #modal-btns { display: flex; justify-content: flex-end; gap: 10px; }
-#modal-cancel {
-  padding: 8px 18px; border: 1px solid #cbd5e1;
-  background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px;
-}
-#modal-cancel:hover { background: #f1f5f9; }
-#modal-ok {
-  padding: 8px 18px; border: none;
-  background: #2563eb; color: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold;
-}
-#modal-ok:hover { background: #1d4ed8; }
+#modal-btns button { padding: 8px 18px; border-radius: 4px; cursor: pointer; font: 13px Arial, sans-serif; }
+#modal-cancel { border: 1px solid #b5b5b5; background: #fff; }
+#modal-cancel:hover { background: #f1f1f1; }
+#modal-ok { border: none; background: var(--accent); color: #fff; font-weight: bold; }
+#modal-ok:hover { background: var(--accent-hover); }
 """

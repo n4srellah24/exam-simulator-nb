@@ -93,15 +93,13 @@ def _smart_sample(note_ids_with_meta, limit):
         groups[meta["deck"]].append(nid)
     buckets = list(groups.values())
     result = []
-    idx = 0
-    while len(result) < limit:
-        buckets = [b for b in buckets if b]
-        if not buckets:
-            break
-        i = idx % len(buckets)
-        result.append(buckets[i].pop(0))
-        idx += 1
-    return result[:limit]
+    # One question from each deck per round, so an emptied deck never makes
+    # the rotation skip the next one.
+    while len(result) < limit and any(buckets):
+        for bucket in buckets:
+            if bucket and len(result) < limit:
+                result.append(bucket.pop(0))
+    return result
 
 
 # ── Card Picker Dialog ────────────────────────────────────────────────────────
