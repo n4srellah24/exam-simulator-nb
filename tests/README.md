@@ -9,4 +9,4 @@ python -m venv .venv && .venv/bin/pip install -r tests/requirements.txt
 
 On a Linux machine without a desktop, Qt WebEngine needs the EGL/GL system libraries (`libegl1`, `libgl1`, `libnss3`, …).
 
-Leave `tests/` and `.claude/` out of the `.ankiaddon` zip you upload to AnkiWeb.
+Leave `tests/` out of the `.ankiaddon` zip you upload to AnkiWeb.
