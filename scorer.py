@@ -2,6 +2,11 @@
 Scoring engine + results HTML builder.
 """
 
+import html
+from datetime import date
+
+from .paper import PAPER_CSS, PEN_SVG, fmt_duration, mark_svg
+
 # ── Flag definitions ──────────────────────────────────────────────────────────
 FLAG_COLORS = {
     1: ("#ef4444", "Red"),
@@ -95,6 +100,7 @@ def compute_score(questions, answers_dict, scoring):
             "earned": earned,
             "possible": possible,
             "nid": q.get("nid", ""),
+            "source": q.get("source", ""),
             "explanation": q.get("explanation", ""),
         })
 
@@ -121,19 +127,54 @@ def compute_score(questions, answers_dict, scoring):
 
 # ── build_results_html ────────────────────────────────────────────────────────
 
+STATUS_LABELS = {
+    "correct": "Correct",
+    "partial": "Partial",
+    "wrong": "Wrong",
+    "skipped": "Skipped",
+}
+
+
+def _option_html(letter, text, is_correct, is_chosen):
+    classes = ["r-opt"]
+    if is_correct:
+        classes.append("key")
+    if is_chosen:
+        classes.append("chosen")
+    if is_chosen and not is_correct:
+        classes.append("bad")
+    notes = []
+    if is_chosen:
+        notes.append("your answer")
+    if is_correct:
+        notes.append("correct answer")
+    sr = f'<span class="sr">({", ".join(notes)})</span>' if notes else ""
+    ink = PEN_SVG if is_chosen else ""
+    return (
+        f'<div class="{" ".join(classes)}">'
+        f'<span class="ink">{ink}</span>'
+        f'<span class="opt-letter"><span class="lt">{letter}</span>:</span>'
+        f'<span class="opt-text">{text}</span>{sr}'
+        f'</div>'
+    )
+
+
 def build_results_html(results):
     pct = _clean_zero(results["percentage"])
     score_20 = _clean_zero(results["score_20"])
-    exam_name = results.get("exam_name", "Exam")
+    exam_name = html.escape(results.get("exam_name", "Exam"))
+    today = date.today().strftime("%d/%m/%Y")
+    dur = fmt_duration(results.get("timer_seconds"))
+    dur_html = f'<span><b>Durée :</b> {dur}</span>' if dur else ""
 
     if score_20 >= 17:
-        grade_color, grade_label = "#16a34a", "Excellent"
+        grade_label = "Excellent"
     elif score_20 >= 14:
-        grade_color, grade_label = "#2563eb", "Good"
+        grade_label = "Good"
     elif score_20 >= 10:
-        grade_color, grade_label = "#d97706", "Pass"
+        grade_label = "Pass"
     else:
-        grade_color, grade_label = "#dc2626", "Fail"
+        grade_label = "Fail"
 
     score_mode = results["scoring"]["mode"]
     mode_labels = {
@@ -143,86 +184,51 @@ def build_results_html(results):
     }
     mode_label = mode_labels.get(score_mode, "Custom")
 
-    q_rows = ""
+    q_blocks = ""
     for r in results["questions"]:
-        status_colors = {
-            "correct": "#16a34a",
-            "partial": "#d97706",
-            "wrong": "#dc2626",
-            "skipped": "#64748b",
-        }
-        status_symbols = {
-            "correct": "✓",
-            "partial": "~",
-            "wrong": "✗",
-            "skipped": "?",
-        }
-        sc = status_colors.get(r["status"], "#64748b")
-        sym = status_symbols.get(r["status"], "?")
         num = r["index"] + 1
-        badge = (
-            f'<div class="status-badge" style="background:{sc};" '
-            f'data-status="{r["status"]}" title="{r["status"].title()}">'
-            f'<span class="badge-sym">{sym}</span>'
-            f'</div>'
+        status = r["status"]
+        opts_html = "".join(
+            _option_html(letter, text, letter in r["correct"], letter in r["chosen"])
+            for letter, text in r["options"].items()
         )
 
-        opts_html = ""
-        for letter, text in r["options"].items():
-            is_correct = letter in r["correct"]
-            is_chosen = letter in r["chosen"]
-            classes = ["res-opt"]
-            if is_correct:
-                classes.append("opt-correct")
-            if is_chosen and not is_correct:
-                classes.append("opt-wrong")
-            if is_chosen:
-                classes.append("opt-chosen")
-            opts_html += (
-                f'<div class="{" ".join(classes)}">'
-                f'<b class="res-letter">{letter}.</b> {text}'
-                f'</div>'
-            )
+        src_html = f'<div class="q-source">Source : {r["source"]}</div>' if r.get("source") else ""
 
         expl_html = ""
         if r.get("explanation"):
             expl_html = (
                 f'<div class="expl-wrap">'
-                f'<button class="expl-toggle" onclick="toggleExpl(this)">'
-                f'▶&nbsp; Show Explanation</button>'
-                f'<div class="expl-body" style="display:none;">'
-                f'{r["explanation"]}</div>'
+                f'<button class="expl-toggle" aria-expanded="false" onclick="toggleExpl(this)">'
+                f'Show explanation</button>'
+                f'<div class="expl-body" hidden>{r["explanation"]}</div>'
                 f'</div>'
             )
 
-        earned_display = _fmt_score(r["earned"])
-        possible_display = _fmt_score(r["possible"])
-        score_str = f'{earned_display} / {possible_display}'
-        nid = r.get("nid", "")
-
-        q_rows += (
-            f'<tr id="qrow-{r["index"]}" data-status="{r["status"]}">'
-            f'<td class="td-sel">'
-            f'<label class="sel-label">'
-            f'<input type="checkbox" class="q-check" data-nid="{nid}" onchange="refreshSelCount()">'
+        label = STATUS_LABELS.get(status, "Skipped")
+        q_blocks += (
+            f'<div class="r-q" id="qrow-{r["index"]}" data-status="{status}" '
+            f'onclick="toggleRowSelection(event, {r["index"]})">'
+            f'<label class="sel" title="Select question {num}">'
+            f'<input type="checkbox" class="q-check" data-nid="{r.get("nid", "")}" '
+            f'aria-label="Select question {num}" onchange="refreshSelCount()">'
             f'</label>'
-            f'</td>'
-            f'<td class="td-content" onclick="toggleRowSelection(event, {r["index"]})">'
-            f'<div class="res-question"><span class="q-inline-num">{num}.</span> {r["question"]}</div>'
-            f'{opts_html}{expl_html}</td>'
-            f'<td class="td-score">'
-            f'<div class="score-stack">'
-            f'<div class="score-value">{score_str}</div>'
-            f'{badge}'
+            f'<div class="r-body">'
+            f'<div class="q-header"><span class="q-num">{num}</span>'
+            f'<span class="q-text">{r["question"]}</span></div>'
+            f'<div class="q-opts">{opts_html}</div>{src_html}{expl_html}'
             f'</div>'
-            f'</td>'
-            f'</tr>'
+            f'<div class="r-mark" title="{label}">'
+            f'{mark_svg(status)}'
+            f'<span class="r-score">{_fmt_score(r["earned"])}<small>/{_fmt_score(r["possible"])}</small></span>'
+            f'<span class="sr">{label}</span>'
+            f'</div>'
+            f'</div>'
         )
 
     flag_opts = ''.join(
-        f'<option value="{fnum}" style="color:{col};">'
-        f'{FLAG_COLORS[fnum][1]}</option>'
-        for fnum, (col, _) in FLAG_COLORS.items()
+        f'<option value="{fnum}">{name}</option>'
+        for fnum, (_, name) in FLAG_COLORS.items()
     )
 
     flag_svg_map = '{' + ','.join(
@@ -235,401 +241,187 @@ def build_results_html(results):
 
     n_q = len(results["questions"])
 
+    def filter_btn(status, count, active=False):
+        icon = "" if status == "all" else mark_svg(status)
+        label = "All" if status == "all" else STATUS_LABELS[status]
+        cls = "filt active" if active else "filt"
+        return (f'<button class="{cls}" data-filter="{status}" aria-pressed="{str(active).lower()}" '
+                f'onclick="filterRows(\'{status}\')">{icon}<span>{label}</span>'
+                f'<b>{count}</b></button>')
+
+    filters = filter_btn("all", n_q, True) + filter_btn("correct", results["n_correct"])
+    if score_mode != "raw":
+        filters += filter_btn("partial", results["n_partial"])
+    filters += filter_btn("wrong", results["n_wrong"]) + filter_btn("skipped", results["n_skipped"])
+
     return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="utf-8">
 <title>Results — {exam_name}</title>
 <style>
-*, *::before, *::after {{ box-sizing: border-box; margin: 0; padding: 0; }}
-body {{
-  font-family: Arial, sans-serif;
-  background: #eef2f7;
-  color: #1a1a1a;
-  height: 100vh;
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-}}
+{PAPER_CSS}
 
-#header {{
-  background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
-  color: white;
-  padding: 18px 28px;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  gap: 20px;
-  flex-shrink: 0;
-  box-shadow: 0 6px 24px rgba(15, 23, 42, 0.28);
+#topbar {{
+  display: flex; justify-content: space-between; align-items: center; gap: 20px;
+  background: var(--bar); color: var(--bar-ink); padding: 10px 24px; flex-shrink: 0;
 }}
-#header-left h1 {{ font-size: 18px; font-weight: 700; margin-bottom: 2px; }}
-#header-left .sub {{ color: #cbd5e1; font-size: 12px; }}
-#header-center {{ text-align: center; }}
-.score-big {{ font-size: 50px; font-weight: bold; color: {grade_color}; line-height: 1; }}
-.grade-label {{ font-size: 15px; font-weight: bold; color: {grade_color}; margin-top: 4px; }}
-.score-sub {{ color: #cbd5e1; font-size: 12px; margin-top: 3px; }}
-#header-right {{ display: flex; flex-direction: column; gap: 10px; align-items: stretch; min-width: 220px; }}
+#topbar h1 {{ font-size: 14px; font-weight: bold; }}
+#topbar .sub {{ font-size: 12px; color: var(--bar-soft); margin-left: 12px; font-weight: normal; }}
+#top-actions {{ display: flex; gap: 8px; }}
 .hdr-btn {{
-  padding: 12px 18px;
-  font-size: 13px;
-  font-weight: 700;
-  border: none;
-  cursor: pointer;
-  border-radius: 10px;
-  text-align: center;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.22);
+  padding: 8px 16px; font: bold 13px Arial, sans-serif; border-radius: 4px; cursor: pointer;
 }}
-.btn-close {{ background: #334155; color: #fff; box-shadow: 0 8px 18px rgba(15, 23, 42, 0.22); }}
-.btn-close:hover {{ background: #1e293b; }}
-.btn-another {{ background: #2563eb; color: #fff; }}
-.btn-another:hover {{ background: #1d4ed8; }}
+.btn-close {{ background: transparent; color: var(--bar-ink); border: 1px solid #475569; }}
+.btn-close:hover {{ background: #334155; }}
+.btn-another {{ background: var(--accent); color: #fff; border: 1px solid var(--accent); }}
+.btn-another:hover {{ background: var(--accent-hover); }}
 
-#stats-bar {{
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  padding: 12px 28px;
-  background: #fff;
-  border-bottom: 1px solid #e2e8f0;
-  flex-shrink: 0;
+#toolbar {{
+  display: flex; flex-wrap: wrap; align-items: center; gap: 10px 22px;
+  padding: 10px 24px; background: #ecebe7; border-bottom: 1px solid #bdbab2;
+  font-size: 13px; flex-shrink: 0;
 }}
-.stat-box {{
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  padding: 9px 16px;
-  border-radius: 999px;
-  font-size: 13px;
-  font-weight: 700;
-  background: #f8fafc;
-  border: 1px solid #dbe3ee;
-  cursor: pointer;
-  transition: all .15s ease;
+.tool-group {{ display: flex; align-items: center; gap: 6px; }}
+.tool-label {{ font-size: 12px; color: #5a5852; margin-right: 2px; }}
+.filt {{
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px;
+  border: 1px solid #b9b6ae; background: #fff; border-radius: 4px; cursor: pointer;
+  font: 13px Arial, sans-serif; color: var(--print);
 }}
-.stat-box:hover {{ background: #eef4ff; border-color: #bfdbfe; transform: translateY(-1px); }}
-.stat-box.active {{ border-color: #2563eb; background: #dbeafe; box-shadow: 0 0 0 2px rgba(37,99,235,.08); }}
-.stat-box.filter-all {{ background: #0f172a; color: white; border-color: #0f172a; }}
-.stat-box.filter-all:hover {{ background: #1e293b; border-color: #1e293b; }}
-.stat-box.filter-all.active {{ background: #2563eb; border-color: #2563eb; }}
-.stat-num {{ font-size: 19px; font-weight: 800; }}
+.filt .mark {{ width: 15px; height: 15px; }}
+.filt b {{ font-variant-numeric: tabular-nums; }}
+.filt:hover {{ border-color: #6b6962; }}
+.filt.active {{ background: var(--print); border-color: var(--print); color: #fff; }}
+.filt.active .mark path {{ stroke: #fff; }}
+.act-btn, #flag-select, #tag-input {{
+  height: 32px; padding: 0 10px; font: 13px Arial, sans-serif;
+  border: 1px solid #b9b6ae; border-radius: 4px; background: #fff; color: var(--print);
+}}
+.act-btn {{ cursor: pointer; }}
+.act-btn:hover {{ border-color: #6b6962; }}
+.act-btn-primary {{ background: var(--accent); border-color: var(--accent); color: #fff; font-weight: bold; }}
+.act-btn-primary:hover {{ background: var(--accent-hover); border-color: var(--accent-hover); }}
+#tag-input {{ width: 170px; }}
+#tag-input::placeholder {{ color: #77756e; }}
+#sel-count {{ font-weight: bold; font-variant-numeric: tabular-nums; min-width: 82px; }}
+#action-feedback {{ font-size: 12px; color: #1f6b33; font-weight: bold; }}
 
-#bulk-panel {{
-  padding: 10px 28px 10px;
-  background: linear-gradient(180deg, #f8fbff 0%, #eef5ff 100%);
-  border-bottom: 1px solid #dbe3ee;
-  flex-shrink: 0;
+#results-scroll {{ flex: 1; overflow-y: auto; padding: 28px 32px 56px; }}
+#corrected {{ max-width: 900px; margin: 0 auto; padding: 48px 56px 64px 40px; font-size: 15px; }}
+#corrected .paper-head {{ margin-left: 30px; }}
+.head-grid {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }}
+.head-info {{ flex: 1; }}
+.note-box {{
+  border: 2px solid var(--red-pen); color: var(--red-pen);
+  padding: 6px 14px 8px; text-align: center; transform: rotate(-1.5deg); flex-shrink: 0;
 }}
-#bulk-card {{
-  background: #ffffff;
-  border: 1px solid #cfe0ff;
-  border-radius: 14px;
-  padding: 10px 14px;
-  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.06);
+.note-label {{ font-size: 12px; font-weight: bold; }}
+.note-val {{ font-size: 30px; font-weight: bold; line-height: 1.1; font-variant-numeric: tabular-nums; }}
+.note-val small {{ font-size: 15px; }}
+.note-sub {{ font-size: 12px; font-variant-numeric: tabular-nums; }}
+.legend {{
+  display: flex; flex-wrap: wrap; gap: 6px 22px; margin: -12px 0 26px 30px;
+  font-size: 12px; color: var(--print-soft);
 }}
-#action-bar {{
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-}}
-#sel-summary {{
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 132px;
-  height: 44px;
-  padding: 0 16px;
-  border-radius: 999px;
-  background: #eff6ff;
-  border: 1px solid #bfdbfe;
-  color: #1d4ed8;
-  font-size: 14px;
-  font-weight: 800;
-  text-align: center;
-  white-space: nowrap;
-}}
-.action-group {{
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  padding: 8px 10px;
-  border-radius: 12px;
-  background: #f8fafc;
-  border: 1px solid #e2e8f0;
-}}
-.action-group-title {{
-  display: flex;
-  align-items: center;
-  margin-right: 2px;
-}}
-.action-group-title strong {{ font-size: 12px; color: #0f172a; text-transform: uppercase; letter-spacing: .7px; }}
-.control-stack {{ display: flex; align-items: center; gap: 6px; }}
-.control-stack label {{ font-size: 11px; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: .7px; }}
-#flag-select, #tag-input {{
-  height: 40px;
-  padding: 0 12px;
-  font-size: 13px;
-  border: 1px solid #cbd5e1;
-  border-radius: 10px;
-  background: #fff;
-}}
-#flag-select {{ min-width: 140px; }}
-#tag-input {{ width: 210px; }}
-.act-btn {{
-  height: 40px;
-  padding: 0 14px;
-  font-size: 13px;
-  font-weight: 700;
-  border: 1px solid #cbd5e1;
-  background: #fff;
-  border-radius: 10px;
-  cursor: pointer;
-}}
-.act-btn:hover {{ background: #f1f5f9; }}
-.act-btn-primary {{ background: #2563eb; color: #fff; border-color: #2563eb; box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18); }}
-.act-btn-primary:hover {{ background: #1d4ed8; }}
-#action-feedback {{ font-size: 12px; font-weight: 700; color: #16a34a; min-width: 130px; }}
+.legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
+.legend .ink {{ display: inline-block; width: 14px; height: 14px; }}
+.legend .lg-key {{ display: inline-flex; width: 18px; height: 18px; align-items: center; justify-content: center;
+  border: 1.6px solid var(--red-pen); border-radius: 50%; color: var(--print); font-size: 11px; }}
+.legend .lg-bad {{ text-decoration: line-through; text-decoration-color: var(--red-pen); text-decoration-thickness: 2px; color: var(--print); }}
 
-#results-scroll {{ flex: 1; overflow-y: auto; padding: 16px 28px 32px; }}
+.r-q {{
+  display: grid; grid-template-columns: 30px 1fr 74px; align-items: start;
+  margin-bottom: 1.1em; padding: .35em 0; border-radius: 3px; cursor: pointer;
+}}
+.r-q:hover {{ background: #fafaf7; }}
+.r-q.row-selected {{ background: #eef2fc; }}
+.r-q.row-hidden {{ display: none; }}
+.sel {{ display: flex; justify-content: center; padding-top: .2em; cursor: pointer; }}
+.q-check {{ width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }}
+.r-opt {{ display: flex; align-items: baseline; gap: .4em; line-height: 1.5; }}
+.r-opt .ink {{ width: 1em; height: 1em; flex-shrink: 0; align-self: center; margin-left: -1.4em; }}
+.r-body {{ padding-left: 1.4em; min-width: 0; }}
+.r-body .q-header {{ margin-left: -1.4em; padding-left: 1.4em; }}
+.r-opt .opt-letter {{ min-width: 1.2em; }}
+.r-opt .lt {{ position: relative; }}
+.r-opt.key .lt::before {{
+  content: ""; position: absolute; left: 50%; top: 52%; width: 1.5em; height: 1.4em;
+  border: 1.6px solid var(--red-pen); border-radius: 50%;
+  transform: translate(-50%, -50%) rotate(-8deg);
+}}
+.r-opt.bad .opt-text {{
+  text-decoration: line-through; text-decoration-color: var(--red-pen); text-decoration-thickness: 2px;
+}}
+.r-mark {{ display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: .1em; }}
+.r-score {{ color: var(--red-pen); font-weight: bold; font-size: 13px; font-variant-numeric: tabular-nums; }}
+.r-score small {{ font-size: 11px; }}
+.r-q[data-status="skipped"] .r-score {{ color: #6f6f6f; }}
 
-table {{
-  width: 100%;
-  border-collapse: collapse;
-  background: white;
-  border-radius: 14px;
-  overflow: hidden;
-  box-shadow: 0 6px 22px rgba(15, 23, 42, 0.08);
-}}
-thead th {{
-  background: #0f172a;
-  color: white;
-  padding: 11px 10px;
-  text-align: left;
-  font-size: 12px;
-  position: sticky;
-  top: 0;
-  z-index: 5;
-}}
-
-.td-sel {{
-  width: 52px;
-  text-align: center;
-  padding: 0;
-  border-bottom: 1px solid #e2e8f0;
-  vertical-align: middle;
-}}
-.sel-label {{
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  min-height: 56px;
-  cursor: pointer;
-  padding: 10px;
-}}
-.q-check {{ width: 18px; height: 18px; cursor: pointer; accent-color: #2563eb; }}
-
-.status-badge {{
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  cursor: default;
-  line-height: 1;
-  flex-shrink: 0;
-}}
-.badge-sym {{ font-size: 15px; font-weight: bold; color: rgba(255,255,255,0.92); }}
-
-.td-content {{
-  padding: 12px 14px;
-  border-bottom: 1px solid #e2e8f0;
-  vertical-align: top;
-  cursor: pointer;
-}}
-.td-score {{
-  width: 96px;
-  text-align: center;
-  font-weight: bold;
-  font-size: 13px;
-  white-space: nowrap;
-  padding: 8px 6px;
-  border-bottom: 1px solid #e2e8f0;
-  vertical-align: middle;
-}}
-.score-stack {{
-  min-height: 100%;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-}}
-.score-value {{ font-size: 13px; font-weight: bold; }}
-
-tbody tr:nth-child(even) {{ background: #f8fafc; }}
-tbody tr:nth-child(even):hover {{ background: #f1f5f9; }}
-tbody tr:nth-child(odd):hover {{ background: #f1f5f9; }}
-tbody tr:last-child td {{ border-bottom: none; }}
-tr.row-selected td {{
-  background: linear-gradient(180deg, #eff6ff 0%, #dbeafe 100%) !important;
-  box-shadow: inset 0 1px 0 rgba(255,255,255,.75), inset 0 -1px 0 rgba(191,219,254,.9);
-}}
-tr.row-selected .td-content {{
-  border-left: 4px solid #2563eb;
-  box-shadow: inset 0 0 0 1px rgba(37,99,235,.14);
-}}
-tr.row-selected .res-question {{ color: #0f172a; }}
-tr.row-hidden {{ display: none; }}
-
-.res-question {{ font-weight: 600; font-size: 14px; line-height: 1.55; margin-bottom: 8px; }}
-.q-inline-num {{ font-weight: 700; margin-right: 4px; }}
-.res-opt {{
-  display: flex;
-  gap: 6px;
-  font-size: 13px;
-  margin: 3px 0;
-  padding: 5px 10px;
-  border-radius: 6px;
-  border: 1px solid rgba(0,0,0,.08);
-  line-height: 1.5;
-  background: #fff;
-}}
-.res-letter {{ font-weight: bold; flex-shrink: 0; min-width: 18px; }}
-.opt-correct {{ background: rgba(0,190,0,0.18) !important; border-color: rgba(0,150,0,0.2) !important; }}
-.opt-wrong {{ background: rgba(255,38,38,0.22) !important; border-color: rgba(200,0,0,0.2) !important; }}
-.opt-chosen {{
-  border-color: rgba(59,130,246,0.95) !important;
-  box-shadow: inset 0 0 0 2px rgba(59,130,246,0.75) !important;
-}}
-
-.expl-wrap {{ margin-top: 10px; border-top: 1px dashed #e2e8f0; padding-top: 8px; }}
+.expl-wrap {{ margin-top: .4em; }}
 .expl-toggle {{
-  font-size: 12px;
-  font-weight: bold;
-  color: #fff;
-  background: #2563eb;
-  border: none;
-  border-radius: 6px;
-  padding: 6px 12px;
-  cursor: pointer;
-  margin-bottom: 6px;
-  transition: background .15s;
+  background: none; border: none; padding: 2px 0; cursor: pointer;
+  font: bold 13px Arial, sans-serif; color: var(--accent);
+  text-decoration: underline; text-underline-offset: 3px;
 }}
-.expl-toggle:hover {{ background: #1d4ed8; }}
+.expl-toggle:hover {{ color: var(--accent-hover); }}
 .expl-body {{
-  font-size: 13px;
-  color: #334155;
-  line-height: 1.6;
-  padding: 8px 12px;
-  background: #eff6ff;
-  border-left: 3px solid #2563eb;
-  border-radius: 0 6px 6px 0;
+  margin-top: 6px; padding: 10px 14px; font-size: .9em; line-height: 1.6;
+  background: #f6f5f1; border: 1px solid #dddbd3; cursor: auto;
 }}
-
-@media (max-width: 1120px) {{
-  #header {{ align-items: flex-start; flex-wrap: wrap; }}
-  #header-right {{ width: 100%; max-width: 280px; }}
-  #bulk-top {{ flex-direction: column; }}
-}}
+.sr {{ position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }}
 </style>
 </head>
 <body>
 
-<div id="header">
-  <div id="header-left">
-    <h1>📋 {exam_name}</h1>
-    <div class="sub">Scoring: {mode_label} &nbsp;·&nbsp; {n_q} questions</div>
-  </div>
-  <div id="header-center">
-    <div style="font-size:11px;color:#cbd5e1;letter-spacing:1px;margin-bottom:2px;">SCORE</div>
-    <div class="score-big">{_fmt_score(score_20)}<span style="font-size:24px;color:#cbd5e1;"> / 20</span></div>
-    <div class="grade-label">{grade_label}</div>
-    <div class="score-sub">{_fmt_score(pct)}% &nbsp;·&nbsp; {_fmt_score(results["total_earned"])} / {_fmt_score(results["total_possible"])} raw pts</div>
-  </div>
-  <div id="header-right">
+<div id="topbar">
+  <h1>{exam_name}<span class="sub">Corrected · {mode_label} · {n_q} questions</span></h1>
+  <div id="top-actions">
     <button class="hdr-btn btn-close" onclick="finishExam()">Close</button>
-    <button class="hdr-btn btn-another" onclick="takeAnotherExam()">📝 Take Another Exam</button>
+    <button class="hdr-btn btn-another" onclick="takeAnotherExam()">Take another exam</button>
   </div>
 </div>
 
-<div id="stats-bar">
-  <div class="stat-box filter-all active" onclick="filterRows('all')">
-    All &nbsp;<span class="stat-num">{n_q}</span>
+<div id="toolbar">
+  <div class="tool-group" role="group" aria-label="Show">{filters}</div>
+  <div class="tool-group">
+    <span id="sel-count">0 selected</span>
+    <button class="act-btn" onclick="selectAll()">Select all</button>
+    <button class="act-btn" onclick="deselectAll()">Clear</button>
   </div>
-  <div class="stat-box" onclick="filterRows('correct')" style="color:#16a34a;">
-    <svg width="18" height="18" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11" fill="#16a34a"/><text x="11" y="16" text-anchor="middle" font-size="13" font-weight="bold" fill="white" font-family="Arial">✓</text></svg>
-    <span class="stat-num" style="color:#16a34a;">{results["n_correct"]}</span> Correct
+  <div class="tool-group">
+    <label class="tool-label" for="flag-select">Flag</label>
+    <select id="flag-select">{flag_opts}</select>
+    <button class="act-btn act-btn-primary" onclick="applyFlag()">Apply flag</button>
   </div>
-  {'' if score_mode == 'raw' else f'''<div class="stat-box" onclick="filterRows('partial')" style="color:#d97706;">
-    <svg width="18" height="18" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11" fill="#d97706"/><text x="11" y="16" text-anchor="middle" font-size="14" font-weight="bold" fill="white" font-family="Arial">~</text></svg>
-    <span class="stat-num" style="color:#d97706;">{results["n_partial"]}</span> Partial
-  </div>'''}
-  <div class="stat-box" onclick="filterRows('wrong')" style="color:#dc2626;">
-    <svg width="18" height="18" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11" fill="#dc2626"/><text x="11" y="16" text-anchor="middle" font-size="13" font-weight="bold" fill="white" font-family="Arial">✗</text></svg>
-    <span class="stat-num" style="color:#dc2626;">{results["n_wrong"]}</span> Wrong
+  <div class="tool-group">
+    <label class="tool-label" for="tag-input">Tag</label>
+    <input id="tag-input" type="text" placeholder="e.g. needs_review">
+    <button class="act-btn act-btn-primary" onclick="applyTag()">Apply tag</button>
   </div>
-  <div class="stat-box" onclick="filterRows('skipped')" style="color:#64748b;">
-    <svg width="18" height="18" viewBox="0 0 22 22"><circle cx="11" cy="11" r="11" fill="#64748b"/><text x="11" y="16" text-anchor="middle" font-size="13" font-weight="bold" fill="white" font-family="Arial">?</text></svg>
-    <span class="stat-num" style="color:#64748b;">{results["n_skipped"]}</span> Skipped
-  </div>
+  <span id="action-feedback" role="status"></span>
 </div>
 
-<div id="bulk-panel">
-  <div id="bulk-card">
-    <div id="action-bar">
-      <div id="sel-summary"><span id="sel-count">Selected: 0</span></div>
-
-      <div class="action-group">
-        <div class="action-group-title">
-          <strong>Select</strong>
-        </div>
-        <button class="act-btn" onclick="selectAll()">Select all</button>
-        <button class="act-btn" onclick="deselectAll()">Deselect all</button>
+<div id="results-scroll" class="desk">
+  <article id="corrected" class="paper">
+    <header class="paper-head head-grid">
+      <div class="head-info">
+        <div class="ph-row"><span><b>Module :</b> {exam_name}</span><span><b>Date :</b> {today}</span></div>
+        <div class="ph-row"><span>{n_q} QCM</span>{dur_html}</div>
       </div>
-
-      <div class="action-group">
-        <div class="action-group-title">
-          <strong>Flag</strong>
-        </div>
-        <div class="control-stack">
-          <select id="flag-select">{flag_opts}</select>
-        </div>
-        <button class="act-btn act-btn-primary" onclick="applyFlag()">Apply Flag</button>
+      <div class="note-box">
+        <div class="note-label">Note</div>
+        <div class="note-val">{_fmt_score(score_20)}<small> / 20</small></div>
+        <div class="note-sub">{grade_label} · {_fmt_score(pct)} % · {_fmt_score(results["total_earned"])}/{_fmt_score(results["total_possible"])} pts</div>
       </div>
-
-      <div class="action-group">
-        <div class="action-group-title">
-          <strong>Tag</strong>
-        </div>
-        <div class="control-stack">
-          <input id="tag-input" type="text" placeholder="e.g. needs_review">
-        </div>
-        <button class="act-btn act-btn-primary" onclick="applyTag()">Apply Tag</button>
-      </div>
-
-      <span id="action-feedback"></span>
+    </header>
+    <div class="legend" aria-hidden="true">
+      <span><span class="ink">{PEN_SVG}</span>your answer</span>
+      <span><span class="lg-key">A</span>correct answer</span>
+      <span><span class="lg-bad">struck</span>wrong choice</span>
     </div>
-  </div>
-</div>
-
-<div id="results-scroll">
-<table>
-  <thead>
-    <tr>
-      <th style="width:52px;text-align:center;">Select</th>
-      <th>Question &amp; Options</th>
-      <th style="width:96px;text-align:center;">Score</th>
-    </tr>
-  </thead>
-  <tbody>{q_rows}</tbody>
-</table>
+    {q_blocks}
+  </article>
 </div>
 
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
@@ -647,9 +439,10 @@ function takeAnotherExam() {{ if (pybridge) pybridge.takeAnotherExam(); }}
 
 function toggleExpl(btn) {{
   var body = btn.nextElementSibling;
-  var open = body.style.display !== 'none';
-  body.style.display = open ? 'none' : 'block';
-  btn.textContent = (open ? '▶' : '▼') + '\u00a0 ' + (open ? 'Show' : 'Hide') + ' Explanation';
+  var open = !body.hidden;
+  body.hidden = open;
+  btn.setAttribute('aria-expanded', String(!open));
+  btn.textContent = open ? 'Show explanation' : 'Hide explanation';
 }}
 
 function toggleRowSelection(event, rowIndex) {{
@@ -665,33 +458,28 @@ function toggleRowSelection(event, rowIndex) {{
 
 function filterRows(status) {{
   currentFilter = status;
-  document.querySelectorAll('.stat-box').forEach(function(b) {{
-    b.classList.remove('active');
+  document.querySelectorAll('.filt').forEach(function(b) {{
+    var on = b.dataset.filter === status;
+    b.classList.toggle('active', on);
+    b.setAttribute('aria-pressed', String(on));
   }});
-  var clicked = document.querySelector('.stat-box[onclick*="' + status + '"]');
-  if (clicked) clicked.classList.add('active');
-
-  document.querySelectorAll('tbody tr').forEach(function(tr) {{
-    if (status === 'all' || tr.dataset.status === status) {{
-      tr.classList.remove('row-hidden');
-    }} else {{
-      tr.classList.add('row-hidden');
-    }}
+  document.querySelectorAll('.r-q').forEach(function(q) {{
+    q.classList.toggle('row-hidden', !(status === 'all' || q.dataset.status === status));
   }});
   deselectAll();
 }}
 
 function refreshSelCount() {{
   var n = document.querySelectorAll('.q-check:checked').length;
-  document.getElementById('sel-count').textContent = 'Selected: ' + n;
-  document.querySelectorAll('tbody tr').forEach(function(tr) {{
-    var cb = tr.querySelector('.q-check');
-    if (cb) tr.classList.toggle('row-selected', cb.checked);
+  document.getElementById('sel-count').textContent = n + ' selected';
+  document.querySelectorAll('.r-q').forEach(function(q) {{
+    var cb = q.querySelector('.q-check');
+    if (cb) q.classList.toggle('row-selected', cb.checked);
   }});
 }}
 
 function selectAll() {{
-  document.querySelectorAll('tbody tr:not(.row-hidden) .q-check').forEach(function(c) {{
+  document.querySelectorAll('.r-q:not(.row-hidden) .q-check').forEach(function(c) {{
     c.checked = true;
   }});
   refreshSelCount();
@@ -718,7 +506,7 @@ function showFeedback(html) {{
 
 function applyFlag() {{
   var nids = getSelectedNids();
-  if (!nids.length) {{ showFeedback('⚠ No questions selected.'); return; }}
+  if (!nids.length) {{ showFeedback('Select at least one question first.'); return; }}
   var flagNum = parseInt(document.getElementById('flag-select').value);
   if (pybridge) {{
     pybridge.flagNotes(JSON.stringify(nids), flagNum);
@@ -729,12 +517,12 @@ function applyFlag() {{
 
 function applyTag() {{
   var nids = getSelectedNids();
-  if (!nids.length) {{ showFeedback('⚠ No questions selected.'); return; }}
+  if (!nids.length) {{ showFeedback('Select at least one question first.'); return; }}
   var tag = document.getElementById('tag-input').value.trim();
-  if (!tag) {{ showFeedback('⚠ Enter a tag name.'); return; }}
+  if (!tag) {{ showFeedback('Type a tag name first.'); return; }}
   if (pybridge) {{
     pybridge.tagNotes(JSON.stringify(nids), tag);
-    showFeedback('🏷 Tagged ' + nids.length + ' card(s): ' + tag);
+    showFeedback('Tagged ' + nids.length + ' card(s): ' + tag);
   }}
 }}
 </script>

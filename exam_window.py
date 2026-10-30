@@ -1,18 +1,22 @@
 """
 ExamWindow — split-panel exam interface.
 
-Left : scrollable exam-paper question sheet  (+/- zoom widget)
-Right: physical square answer grid (Q# × A B C D E, ✕ when selected)
-Top  : topbar with title, timer, submit button
+Left : scrollable printed question booklet on the desk  (+/- zoom widget)
+Right: separate answer sheet (blocks of 10 rows × A B C D E, pen ✕ when marked)
+Top  : topbar with title, progress, timer, submit button
 """
 
+import html
 import json
+from datetime import date
 from PyQt6.QtCore import QObject, QTimer, pyqtSlot
 from PyQt6.QtWebChannel import QWebChannel
 from PyQt6.QtWidgets import QMainWindow
 from aqt.qt import Qt
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from aqt import mw
+
+from .paper import PAPER_CSS, PEN_SVG, comb_date, comb_field, fmt_duration
 
 
 # ── Bridge ────────────────────────────────────────────────────────────────────
@@ -168,6 +172,7 @@ class ExamWindow(QMainWindow):
 
         results = compute_score(self.questions, answers_dict, self.scoring)
         results["exam_name"] = self.exam_name
+        results["timer_seconds"] = self.timer_seconds
         self._web.setHtml(build_results_html(results))
         self._rebind_webchannel()
 
@@ -178,53 +183,70 @@ class ExamWindow(QMainWindow):
         n       = len(self.questions)
         timer_s = self.timer_seconds
         hidden  = "hidden" if not timer_s else ""
+        name    = html.escape(self.exam_name)
+        today   = date.today().strftime("%d/%m/%Y")
+        dur     = fmt_duration(timer_s)
+        dur_html = f'<span><b>Durée :</b> {dur}</span>' if dur else ""
 
         return f"""<!DOCTYPE html>
-<html lang="en">
+<html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>Exam — {self.exam_name}</title>
-<style>{_EXAM_CSS}</style>
+<title>Exam — {name}</title>
+<style>{PAPER_CSS}{_EXAM_CSS}</style>
 </head>
 <body>
 
 <!-- TOPBAR -->
 <div id="topbar">
-  <div id="exam-title">Exam &nbsp;·&nbsp; {n} Questions &nbsp;·&nbsp; {self.exam_name}</div>
+  <div id="exam-meta">
+    <span id="exam-title">{name}</span>
+    <span id="progress"><b id="ans-count">0</b> / {n} answered</span>
+  </div>
   <div id="timer-wrap" class="{hidden}"><span id="timer-text">--:--</span></div>
   <button id="submit-btn" onclick="askSubmit()">Submit Exam</button>
 </div>
 
 <!-- MAIN -->
 <div id="main">
-  <div id="left-panel">
+  <div id="left-panel" class="desk">
     <div id="zoom-ctrl">
-      <button class="zoom-btn" onclick="zoomIn()" title="Zoom in">＋</button>
-      <button class="zoom-btn" onclick="zoomOut()" title="Zoom out">－</button>
+      <button class="zoom-btn" onclick="zoomIn()" title="Zoom in" aria-label="Zoom in">+</button>
+      <button class="zoom-btn" onclick="zoomOut()" title="Zoom out" aria-label="Zoom out">&minus;</button>
     </div>
-    <div id="questions-container"></div>
+    <article id="booklet" class="paper">
+      <header class="paper-head">
+        <div class="ph-row"><span><b>Module :</b> {name}</span><span><b>Date :</b> {today}</span></div>
+        <div class="ph-row"><span>{n} QCM</span>{dur_html}</div>
+      </header>
+      <div id="questions-container"></div>
+    </article>
   </div>
-  <div id="right-panel">
-    <div id="grid-header-row">
-      <span id="grid-title">ANSWER SHEET</span>
-      <span id="progress">Done: <b id="ans-count">0</b>/{n}</span>
-    </div>
-    <div id="grid-scroll">
-      <table id="answer-grid">
-        <thead id="grid-head"></thead>
-        <tbody id="grid-body"></tbody>
-      </table>
-    </div>
+  <div id="right-panel" class="desk">
+    <section id="sheet" class="paper" aria-label="Answer sheet">
+      <div class="sheet-head">
+        <div class="sheet-fields">
+          {comb_field("Module", self.exam_name.upper(), 18)}
+          {comb_date("Date", today)}
+        </div>
+        <div class="sheet-rules">
+          <b>Consignes</b>
+          <p>Cochez d'une croix la ou les réponse(s) juste(s) dans la case correspondante.</p>
+          <p class="ex">Exemple : <span class="box box-on">{PEN_SVG}</span></p>
+        </div>
+      </div>
+      <div id="sheet-grid"></div>
+    </section>
   </div>
 </div>
 
 <!-- Custom confirm modal -->
 <div id="modal-overlay" style="display:none;">
-  <div id="modal-box">
-    <div id="modal-title">Confirmation</div>
+  <div id="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+    <div id="modal-title">Submit your paper?</div>
     <div id="modal-msg"></div>
     <div id="modal-btns">
-      <button id="modal-cancel" onclick="modalCancel()">Cancel</button>
+      <button id="modal-cancel" onclick="modalCancel()">Keep answering</button>
       <button id="modal-ok"     onclick="modalOk()">Submit anyway</button>
     </div>
   </div>
@@ -237,19 +259,20 @@ class ExamWindow(QMainWindow):
 const QUESTIONS     = {q_json};
 const TIMER_SECONDS = {timer_s};
 const N             = QUESTIONS.length;
+const PEN           = '{PEN_SVG}';
 
 let pybridge      = null;
 let answers       = {{}};
 let timerLeft     = TIMER_SECONDS;
 let timerInterval = null;
-let fontSize      = 14;
+let fontSize      = 15;
 let _modalResolve = null;
 
 new QWebChannel(qt.webChannelTransport, ch => {{
   pybridge = ch.objects.pybridge || null;
 }});
 
-/* ── Questions ──────────────────────────────────────────────────────────── */
+/* ── Booklet ────────────────────────────────────────────────────────────── */
 function renderQuestions() {{
   const c = document.getElementById("questions-container");
   QUESTIONS.forEach((q, i) => {{
@@ -258,11 +281,11 @@ function renderQuestions() {{
     block.id        = "qblock-" + i;
     let opts = "";
     for (const [l, t] of Object.entries(q.options))
-      opts += `<div class="q-opt"><span class="opt-letter">${{l}}.</span><span class="opt-text">${{t}}</span></div>`;
-    const src = q.source ? `<div class="q-source">Source: ${{q.source}}</div>` : "";
+      opts += `<div class="q-opt"><span class="opt-letter">${{l}}:</span><span class="opt-text">${{t}}</span></div>`;
+    const src = q.source ? `<div class="q-source">Source : ${{q.source}}</div>` : "";
     block.innerHTML = `
       <div class="q-header">
-        <span class="q-num">${{i+1}}.</span>
+        <span class="q-num">${{i+1}}</span>
         <span class="q-text">${{q.question}}</span>
       </div>
       <div class="q-opts">${{opts}}</div>${{src}}`;
@@ -270,54 +293,74 @@ function renderQuestions() {{
   }});
 }}
 
-/* ── Grid ───────────────────────────────────────────────────────────────── */
+/* ── Answer sheet: blocks of 10, first half down the left column ────────── */
 function renderGrid() {{
-  const ALL = ["A","B","C","D","E"];
+  const ALL  = ["A","B","C","D","E"];
   const used = new Set();
   QUESTIONS.forEach(q => Object.keys(q.options).forEach(l => used.add(l)));
   const cols = ALL.filter(l => used.has(l));
 
-  document.getElementById("grid-head").innerHTML =
-    "<tr><th class='th-num'></th>" + cols.map(l=>`<th>${{l}}</th>`).join("") + "</tr>";
+  const nBlocks = Math.ceil(N / 10);
+  const nLeft   = Math.ceil(nBlocks / 2);
+  const grid    = document.getElementById("sheet-grid");
+  const colEls  = [document.createElement("div"), document.createElement("div")];
+  colEls.forEach(el => {{ el.className = "sheet-col"; grid.appendChild(el); }});
 
-  const tbody = document.getElementById("grid-body");
-  QUESTIONS.forEach((q, i) => {{
-    const tr = document.createElement("tr");
-    tr.id = "grow-" + i;
-    let cells = `<td class="td-num" onclick="scrollToQ(${{i}})" title="Jump to Q${{i+1}}">Q${{i+1}}</td>`;
-    cols.forEach(l => {{
-      if (q.options[l] !== undefined)
-        cells += `<td><div class="box" id="b-${{i}}-${{l}}" onclick="toggle(${{i}},'${{l}}')"></div></td>`;
-      else
-        cells += `<td><div class="box box-na"></div></td>`;
-    }});
-    tr.innerHTML = cells;
-    tbody.appendChild(tr);
-  }});
+  for (let b = 0; b < nBlocks; b++) {{
+    let rows = "";
+    for (let i = b * 10; i < Math.min(N, b * 10 + 10); i++) {{
+      const q = QUESTIONS[i];
+      let cells = `<th class="qlabel" scope="row" onclick="scrollToQ(${{i}})" title="Go to question ${{i+1}}">Q${{i+1}}</th>`;
+      cols.forEach(l => {{
+        cells += q.options[l] !== undefined
+          ? `<td><span class="box" id="b-${{i}}-${{l}}" role="checkbox" aria-checked="false" aria-label="Q${{i+1}} ${{l}}" tabindex="0" onclick="toggle(${{i}},'${{l}}')" onkeydown="boxKey(event,${{i}},'${{l}}')"></span></td>`
+          : `<td><span class="box box-na" aria-hidden="true"></span></td>`;
+      }});
+      rows += `<tr>${{cells}}</tr>`;
+    }}
+    const head = "<tr><th></th>" + cols.map(l => `<th scope="col">${{l}}</th>`).join("") + "</tr>";
+    const table = document.createElement("table");
+    table.className = "block";
+    table.innerHTML = `<thead>${{head}}</thead><tbody>${{rows}}</tbody>`;
+    colEls[b < nLeft ? 0 : 1].appendChild(table);
+  }}
 }}
 
 function toggle(qi, l) {{
   if (!answers[qi]) answers[qi] = new Set();
   const s  = answers[qi];
   const el = document.getElementById(`b-${{qi}}-${{l}}`);
-  if (s.has(l)) {{ s.delete(l); el.classList.remove("box-on"); el.textContent = ""; }}
-  else          {{ s.add(l);    el.classList.add("box-on");    el.textContent = "✕"; }}
-  const numCell = document.querySelector(`#grow-${{qi}} .td-num`);
-  if (numCell) numCell.classList.toggle("td-done", s.size > 0);
+  if (s.has(l)) {{
+    s.delete(l); el.classList.remove("box-on"); el.innerHTML = "";
+  }} else {{
+    s.add(l); el.classList.add("box-on");
+    el.innerHTML = PEN;
+    // a hand never draws the same cross twice
+    el.firstChild.style.transform = `rotate(${{((qi * 7 + l.charCodeAt(0) * 3) % 11) - 5}}deg) scale(1.12)`;
+  }}
+  el.setAttribute("aria-checked", s.has(l) ? "true" : "false");
   document.getElementById("ans-count").textContent =
     Object.values(answers).filter(s=>s&&s.size>0).length;
 }}
 
+function boxKey(e, qi, l) {{
+  if (e.key === " " || e.key === "Enter") {{ e.preventDefault(); toggle(qi, l); }}
+}}
+
 function scrollToQ(i) {{
   const el = document.getElementById("qblock-"+i);
-  if (el) el.scrollIntoView({{behavior:"smooth",block:"start"}});
+  if (!el) return;
+  el.scrollIntoView({{behavior:"smooth",block:"start"}});
+  el.classList.remove("q-target");
+  void el.offsetWidth;
+  el.classList.add("q-target");
 }}
 
 /* ── Zoom ───────────────────────────────────────────────────────────────── */
-function zoomIn()  {{ fontSize = Math.min(fontSize + 2, 26); applyZoom(); }}
-function zoomOut() {{ fontSize = Math.max(fontSize - 2,  9); applyZoom(); }}
+function zoomIn()  {{ fontSize = Math.min(fontSize + 2, 27); applyZoom(); }}
+function zoomOut() {{ fontSize = Math.max(fontSize - 2, 11); applyZoom(); }}
 function applyZoom() {{
-  document.getElementById("questions-container").style.fontSize = fontSize + "px";
+  document.getElementById("booklet").style.fontSize = fontSize + "px";
 }}
 
 /* ── Timer ──────────────────────────────────────────────────────────────── */
@@ -343,6 +386,7 @@ function showModal(msg) {{
     _modalResolve = resolve;
     document.getElementById("modal-msg").textContent = msg;
     document.getElementById("modal-overlay").style.display = "flex";
+    document.getElementById("modal-cancel").focus();
   }});
 }}
 function modalOk()     {{ document.getElementById("modal-overlay").style.display="none"; if(_modalResolve) _modalResolve(true);  }}
@@ -352,7 +396,7 @@ async function askSubmit() {{
   const done      = Object.values(answers).filter(s=>s&&s.size>0).length;
   const remaining = N - done;
   if (remaining > 0) {{
-    const ok = await showModal(`${{remaining}} question(s) still unanswered. Submit anyway?`);
+    const ok = await showModal(`${{remaining}} question(s) still have no answer marked on the sheet.`);
     if (!ok) return;
   }}
   doSubmit();
@@ -381,152 +425,114 @@ startTimer();
 # ── CSS (plain string — no f-string, single braces are fine) ─────────────────
 
 _EXAM_CSS = """
-*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
-html, body { height: 100%; overflow: hidden; }
-body {
-  font-family: "Times New Roman", Times, serif;
-  font-size: 14px;
-  background: #e8e8e8;
-  color: #000;
-  display: flex;
-  flex-direction: column;
-}
 #main { display: flex; flex: 1; overflow: hidden; }
 
 /* Topbar */
 #topbar {
   position: relative;
   display: flex; align-items: center; justify-content: space-between;
-  background: #1e293b; color: #fff;
+  background: var(--bar); color: var(--bar-ink);
   padding: 10px 24px; flex-shrink: 0; gap: 16px;
-  font-family: Arial, sans-serif;
 }
-#exam-title { font-size: 13px; font-weight: bold; letter-spacing: .5px; text-transform: uppercase; }
+#exam-meta { display: flex; align-items: baseline; gap: 14px; min-width: 0; }
+#exam-title { font-size: 14px; font-weight: bold; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+#progress { font-size: 12px; color: var(--bar-soft); white-space: nowrap; font-variant-numeric: tabular-nums; }
+#progress b { color: var(--bar-ink); }
 #timer-wrap {
   position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  font-size: 22px; font-weight: bold; font-family: monospace;
+  font-size: 22px; font-weight: bold; font-variant-numeric: tabular-nums;
   color: #7dd3fc; min-width: 90px; text-align: center;
 }
 #timer-wrap.hidden { visibility: hidden; }
 #timer-wrap.timer-warn { color: #f87171; animation: blink 1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: .4; } }
 #submit-btn {
-  background: #2563eb; color: #fff; border: none;
+  background: var(--accent); color: #fff; border: none; border-radius: 4px;
   padding: 8px 20px; font-size: 13px; font-weight: bold;
-  cursor: pointer; font-family: Arial, sans-serif;
-  text-transform: uppercase; letter-spacing: .5px;
+  cursor: pointer; font-family: inherit;
 }
-#submit-btn:hover    { background: #1d4ed8; }
+#submit-btn:hover    { background: var(--accent-hover); }
 #submit-btn:disabled { background: #64748b; cursor: default; }
 
-/* Left panel */
-#left-panel {
-  flex: 3; overflow-y: auto; position: relative;
-  padding: 36px 48px 48px; background: #fff; border-right: 1px solid #bbb;
+/* Booklet side */
+#left-panel { flex: 1; overflow-y: auto; position: relative; padding: 28px 32px 48px; }
+#booklet {
+  max-width: 820px; margin: 0 auto;
+  padding: 52px 64px 64px; font-size: 15px;
 }
 
 /* Zoom widget */
 #zoom-ctrl {
-  position: sticky; top: 8px; float: right;
-  display: flex; flex-direction: column; gap: 4px;
-  z-index: 20; margin-left: 12px;
+  position: sticky; top: 0; float: right; height: 0;
+  display: flex; flex-direction: column; gap: 4px; z-index: 20;
 }
 .zoom-btn {
-  width: 28px; height: 28px;
-  background: #f1f5f9; border: 1px solid #cbd5e1;
-  border-radius: 4px; font-size: 16px; font-weight: bold;
-  cursor: pointer; display: flex; align-items: center; justify-content: center;
-  font-family: Arial, sans-serif; line-height: 1; color: #1e293b;
-  box-shadow: 0 1px 3px rgba(0,0,0,.1);
+  width: 30px; height: 30px; border-radius: 4px;
+  background: #ecebe7; border: 1px solid #a9a69e; color: var(--desk-ink);
+  font: bold 17px/1 Arial, sans-serif; cursor: pointer;
 }
-.zoom-btn:hover { background: #dbeafe; border-color: #2563eb; }
+.zoom-btn:hover { background: #fff; }
 
-/* Question blocks */
-.q-block {
-  margin-bottom: 28px; padding-bottom: 22px; border-bottom: 1px solid #ddd;
+/* Answer sheet side */
+#right-panel { flex: 0 0 412px; overflow-y: auto; padding: 28px 22px 48px 0; }
+#sheet { padding: 22px 20px 36px; min-height: 100%; }
+.sheet-head { border-bottom: 1.5px solid var(--rule); padding-bottom: 12px; margin-bottom: 24px; }
+.sheet-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
+.comb { display: flex; align-items: center; gap: 8px; }
+.comb-label { width: 48px; font-size: 11px; color: var(--print-soft); text-align: right; flex-shrink: 0; }
+.cells { display: flex; align-items: center; }
+.cell {
+  width: 15px; height: 18px; border: 1px solid #6b6b6b; margin-left: -1px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font: bold 11px/1 Arial, sans-serif; color: var(--pen);
 }
-.q-block:last-child { border-bottom: none; }
-.q-header { display: flex; gap: 8px; margin-bottom: 10px; line-height: 1.6; }
-.q-num  { font-weight: bold; font-size: 1em; flex-shrink: 0; padding-top: 1px; }
-.q-text { font-size: 1em; font-weight: bold; line-height: 1.65; }
-.q-opts { display: flex; flex-direction: column; gap: 3px; padding-left: 22px; }
-.q-opt  { display: flex; gap: 8px; font-size: .96em; line-height: 1.6; }
-.opt-letter { font-weight: bold; flex-shrink: 0; min-width: 18px; }
-.opt-text   { color: #111; }
-.q-source   { margin-top: 10px; padding-left: 22px; font-size: .85em; font-style: italic; color: #555; }
+.cell-sep { padding: 0 4px; font-size: 12px; color: var(--print-soft); }
+.sheet-rules {
+  border: 1px solid #6b6b6b; padding: 8px 10px;
+  font-size: 12px; line-height: 1.45; color: #333;
+}
+.sheet-rules b { display: block; margin-bottom: 2px; font-size: 12px; color: var(--print); }
+.sheet-rules .ex { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
 
-/* Right panel / answer grid */
-#right-panel {
-  flex: 0 0 280px; min-width: 240px; max-width: 340px;
-  background: #f5f5f0; display: flex; flex-direction: column;
-  padding: 14px 10px 10px; gap: 6px; font-family: Arial, sans-serif;
-  border-left: 2px solid #999;
+#sheet-grid { display: flex; justify-content: space-between; gap: 18px; }
+.sheet-col { display: flex; flex-direction: column; gap: 26px; }
+.block { border: 1.5px solid var(--rule); border-collapse: collapse; font-size: 12px; }
+.block thead th {
+  background: var(--head-fill); font-size: 12px; font-weight: bold;
+  padding: 2px 0; text-align: center; border-bottom: 1px solid var(--rule);
 }
-#grid-header-row {
-  display: flex; justify-content: space-between; align-items: baseline;
-  padding: 0 4px 4px; border-bottom: 2px solid #333; margin-bottom: 2px;
+.block td { padding: 3px 2px; text-align: center; }
+.block tbody tr:first-child td, .block tbody tr:first-child th { padding-top: 6px; }
+.block tbody tr:last-child td, .block tbody tr:last-child th { padding-bottom: 6px; }
+.qlabel {
+  padding: 3px 6px 3px 6px; text-align: left; font-weight: normal;
+  white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums;
 }
-#grid-title   { font-size: 11px; font-weight: bold; letter-spacing: 1.5px; text-transform: uppercase; color: #333; }
-#progress     { font-size: 11px; color: #555; }
-#grid-scroll  { flex: 1; overflow-y: auto; }
-#answer-grid  { width: 100%; border-collapse: collapse; font-size: 12px; font-family: Arial, sans-serif; }
-#answer-grid thead th {
-  background: #333; color: #fff; padding: 5px 0; text-align: center;
-  font-size: 12px; font-weight: bold; position: sticky; top: 0; z-index: 5;
-  border: 1px solid #555;
-}
-.th-num { width: 38px; }
-#answer-grid tbody tr { border-bottom: 1px solid #ccc; }
-#answer-grid tbody td { padding: 2px 3px; text-align: center; border: 1px solid #ccc; }
-.td-num {
-  font-size: 11px; font-weight: bold; color: #444;
-  cursor: pointer; user-select: none; background: #eee; white-space: nowrap;
-}
-.td-num:hover { color: #2563eb; background: #dbeafe; }
-.td-done      { color: #15803d !important; background: #dcfce7 !important; }
+.qlabel:hover { text-decoration: underline; text-underline-offset: 2px; }
 .box {
-  width: 22px; height: 22px; border: 1.5px solid #444;
-  background: #fff; margin: 0 auto; cursor: pointer;
-  display: flex; align-items: center; justify-content: center;
-  font-size: 14px; font-weight: bold; color: #111;
-  user-select: none; line-height: 1;
+  width: 17px; height: 17px; border: 1.4px solid var(--rule); background: var(--paper);
+  display: inline-flex; vertical-align: middle; cursor: pointer; padding: 0;
 }
-.box:hover { background: #dbeafe; border-color: #2563eb; }
-.box-on {
-  background: #dbeafe !important;
-  border: 2px solid #1d4ed8 !important;
-  color: #0f172a !important;
-  box-shadow: inset 0 0 0 2px rgba(29,78,216,.18), 0 0 0 1px rgba(29,78,216,.14);
-}
-.box-na    { background: #e5e5e5 !important; border-color: #bbb !important; cursor: default; opacity:.5; }
-.box-na:hover { background: #e5e5e5 !important; border-color: #bbb !important; }
+.box:hover { background: #eef1fb; }
+.box-na { border-color: #c4c4c4; background: #f2f2f2; cursor: default; }
+.box-na:hover { background: #f2f2f2; }
 
 /* Custom confirm modal */
 #modal-overlay {
-  position: fixed; inset: 0;
-  background: rgba(0,0,0,.45);
-  display: flex; align-items: center; justify-content: center;
-  z-index: 1000;
+  position: fixed; inset: 0; background: rgba(20,20,20,.45);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
 }
 #modal-box {
-  background: #fff; border-radius: 10px;
-  padding: 28px 32px; min-width: 320px; max-width: 420px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.25);
-  font-family: Arial, sans-serif;
+  background: var(--paper); border-radius: 6px;
+  padding: 26px 30px; min-width: 320px; max-width: 420px;
+  box-shadow: 0 10px 32px rgba(0,0,0,.28);
 }
-#modal-title {
-  font-size: 16px; font-weight: bold; margin-bottom: 12px; color: #1e293b;
-}
-#modal-msg { font-size: 14px; color: #334155; margin-bottom: 22px; line-height: 1.5; }
+#modal-title { font-size: 16px; font-weight: bold; margin-bottom: 10px; }
+#modal-msg { font-size: 14px; color: #333; margin-bottom: 22px; line-height: 1.5; }
 #modal-btns { display: flex; justify-content: flex-end; gap: 10px; }
-#modal-cancel {
-  padding: 8px 18px; border: 1px solid #cbd5e1;
-  background: #fff; border-radius: 6px; cursor: pointer; font-size: 13px;
-}
-#modal-cancel:hover { background: #f1f5f9; }
-#modal-ok {
-  padding: 8px 18px; border: none;
-  background: #2563eb; color: #fff; border-radius: 6px; cursor: pointer; font-size: 13px; font-weight: bold;
-}
-#modal-ok:hover { background: #1d4ed8; }
+#modal-btns button { padding: 8px 18px; border-radius: 4px; cursor: pointer; font: 13px Arial, sans-serif; }
+#modal-cancel { border: 1px solid #b5b5b5; background: #fff; }
+#modal-cancel:hover { background: #f1f1f1; }
+#modal-ok { border: none; background: var(--accent); color: #fff; font-weight: bold; }
+#modal-ok:hover { background: var(--accent-hover); }
 """
