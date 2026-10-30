@@ -170,24 +170,21 @@ def wait_until(pred, timeout=15.0):
 def js(view, code, timeout=15.0):
     """Run JavaScript and return its result.
 
-    Qt drops the callback when the page navigates mid-call (exam → results),
-    so if a new page loads while we wait, run the script again on that page.
+    Qt drops the callback when the page navigates mid-call (exam → results).
+    open_exam counts finished page loads on view._loads, so if a new page
+    finishes loading while we wait, run the script again on that page.
     """
-    box, loads = {}, []
-    on_load = lambda ok: loads.append(ok)
-    view.loadFinished.connect(on_load)
-    try:
-        view.page().runJavaScript(code, lambda r: box.setdefault("r", r))
-        end = time.time() + timeout
-        seen = 0
-        while time.time() < end and "r" not in box:
-            QApplication.processEvents()
-            if len(loads) > seen:
-                seen = len(loads)
-                view.page().runJavaScript(code, lambda r: box.setdefault("r", r))
-            time.sleep(0.005)
-    finally:
-        view.loadFinished.disconnect(on_load)
+    box = {}
+    gen = getattr(view, "_loads", [0])[0]
+    view.page().runJavaScript(code, lambda r: box.setdefault("r", r))
+    end = time.time() + timeout
+    while time.time() < end and "r" not in box:
+        QApplication.processEvents()
+        now = getattr(view, "_loads", [0])[0]
+        if now != gen:
+            gen = now
+            view.page().runJavaScript(code, lambda r: box.setdefault("r", r))
+        time.sleep(0.005)
     assert "r" in box, f"JavaScript timed out: {code}"
     return box["r"]
 
@@ -237,10 +234,15 @@ def open_exam(qapp, addon, mw):
     def _open(qs, timer_seconds=0, mode="partial", name="Gastro", save_history=False):
         win = addon.exam_window.ExamWindow(None, qs, timer_seconds, {"mode": mode},
                                            name, save_history=save_history)
+        view = win._web
+        # Count page loads from the start, so js() can tell a real exam →
+        # results navigation from the exam page's own (sometimes late) load.
+        view._loads = [0]
+        view.loadFinished.connect(lambda ok: view._loads.__setitem__(0, view._loads[0] + 1))
         win.resize(1600, 900)
         win.show()
         windows.append(win)
-        view = win._web
+        assert wait_until(lambda: view._loads[0] >= 1), "exam page never finished loading"
         assert wait_until(lambda: js(view, "typeof N !== 'undefined' && document.querySelectorAll('.q-block').length") == len(qs)), \
             "exam page did not render its questions"
         assert wait_until(lambda: js(view, "pybridge !== null")), "Python bridge never connected"
