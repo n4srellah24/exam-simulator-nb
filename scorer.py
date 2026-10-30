@@ -247,7 +247,7 @@ def build_results_html(results):
     has_notes = bool(notes.get("highlights") or notes.get("strokes"))
     notes_json = json.dumps(notes, ensure_ascii=False).replace("</", "<\\/")
     notes_btn = (
-        '<button id="notes-toggle" class="filt active" aria-pressed="true" '
+        '<button id="notes-toggle" class="notes-btn active" aria-pressed="true" '
         'onclick="toggleNotes()" title="Show or hide your highlights and drawings">'
         '<span>Show my notes</span></button>'
     ) if has_notes else ""
@@ -298,15 +298,15 @@ body.notes-off .r-body .ink-layer {{ display: none; }}
 }}
 .tool-group {{ display: flex; align-items: center; gap: 6px; }}
 .tool-label {{ font-size: 12px; color: #5a5852; margin-right: 2px; }}
-.filt {{
+.filt, .notes-btn {{
   display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px;
   border: 1px solid #b9b6ae; background: #fff; border-radius: 4px; cursor: pointer;
   font: 13px Arial, sans-serif; color: var(--print);
 }}
 .filt .mark {{ width: 15px; height: 15px; }}
 .filt b {{ font-variant-numeric: tabular-nums; }}
-.filt:hover {{ border-color: #6b6962; }}
-.filt.active {{ background: var(--print); border-color: var(--print); color: #fff; }}
+.filt:hover, .notes-btn:hover {{ border-color: #6b6962; }}
+.filt.active, .notes-btn.active {{ background: var(--print); border-color: var(--print); color: #fff; }}
 .filt.active .mark path {{ stroke: #fff; }}
 .act-btn, #flag-select, #tag-input {{
   height: 32px; padding: 0 10px; font: 13px Arial, sans-serif;

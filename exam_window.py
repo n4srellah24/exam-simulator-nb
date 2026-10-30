@@ -188,7 +188,8 @@ class ExamWindow(QMainWindow):
     # ── HTML builders ─────────────────────────────────────────────────────────
 
     def _build_exam_html(self) -> str:
-        q_json  = json.dumps(self.questions, ensure_ascii=False)
+        # "</" would end the <script> early if a field contains "</script>"
+        q_json  = json.dumps(self.questions, ensure_ascii=False).replace("</", "<\\/")
         n       = len(self.questions)
         timer_s = self.timer_seconds
         hidden  = "hidden" if not timer_s else ""
@@ -600,12 +601,30 @@ function removeStroke(s) {
 
 let live = null;
 
-function eraseAt(p) {
-  strokes.filter(s => absPoints(s).some(([x, y]) => Math.hypot(x - p[0], y - p[1]) < 8))
-    .forEach(s => {
-      removeStroke(s);
-      undoStack.push(() => { strokes.push(s); drawStroke(s); });
-    });
+// Distance from point p to segment ab.
+function segDist(p, a, b) {
+  const dx = b[0] - a[0], dy = b[1] - a[1];
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / len2)) : 0;
+  return Math.hypot(p[0] - (a[0] + t * dx), p[1] - (a[1] + t * dy));
+}
+
+// Erase every stroke within reach of the pointer's path from `from` to `to`.
+// A fast swipe moves many pixels between events, so test the whole path.
+function eraseAlong(from, to) {
+  const steps = Math.max(1, Math.ceil(Math.hypot(to[0] - from[0], to[1] - from[1]) / 3));
+  const path = [];
+  for (let i = 0; i <= steps; i++)
+    path.push([from[0] + (to[0] - from[0]) * i / steps, from[1] + (to[1] - from[1]) * i / steps]);
+  strokes.filter(s => {
+    const pts = absPoints(s);
+    return path.some(p => pts.length === 1
+      ? Math.hypot(p[0] - pts[0][0], p[1] - pts[0][1]) < 8
+      : pts.slice(1).some((q, i) => segDist(p, pts[i], q) < 8));
+  }).forEach(s => {
+    removeStroke(s);
+    undoStack.push(() => { strokes.push(s); drawStroke(s); });
+  });
 }
 
 function onInkDown(e) {
@@ -613,7 +632,7 @@ function onInkDown(e) {
   e.preventDefault();
   layer().setPointerCapture(e.pointerId);
   const p = toLocal(e);
-  if (tool === "eraser") { live = {erasing: true}; eraseAt(p); return; }
+  if (tool === "eraser") { live = {erasing: true, last: p}; eraseAlong(p, p); return; }
   const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
   path.setAttribute("class", "ink-" + penColor);
   layer().appendChild(path);
@@ -624,7 +643,7 @@ function onInkDown(e) {
 function onInkMove(e) {
   if (!live) return;
   const p = toLocal(e);
-  if (live.erasing) { eraseAt(p); return; }
+  if (live.erasing) { eraseAlong(live.last, p); live.last = p; return; }
   const last = live.pts[live.pts.length - 1];
   if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 1.2) return;
   live.pts.push(p);
