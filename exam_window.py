@@ -16,7 +16,7 @@ from aqt.qt import Qt
 from PyQt6.QtWebEngineWidgets import QWebEngineView
 from aqt import mw
 
-from .paper import PAPER_CSS, PEN_SVG, comb_date, comb_field, fmt_duration
+from .paper import NOTES_CSS, NOTES_JS, PAPER_CSS, PEN_SVG, comb_field, fmt_duration
 
 
 # ── Bridge ────────────────────────────────────────────────────────────────────
@@ -33,6 +33,13 @@ class _Bridge(QObject):
         except Exception:
             answers = {}
         self._win._on_submit(answers)
+
+    @pyqtSlot(str)
+    def saveNotes(self, notes_json: str):
+        try:
+            self._win._notes = json.loads(notes_json)
+        except Exception:
+            self._win._notes = {}
 
     @pyqtSlot()
     def timeUp(self):
@@ -74,6 +81,7 @@ class ExamWindow(QMainWindow):
         self.scoring       = scoring
         self.exam_name     = exam_name
         self.save_history  = save_history
+        self._notes        = {}
 
         self.setWindowTitle(
             f"Exam Simulator — {len(questions)} Questions  |  {exam_name}")
@@ -173,6 +181,7 @@ class ExamWindow(QMainWindow):
         results = compute_score(self.questions, answers_dict, self.scoring)
         results["exam_name"] = self.exam_name
         results["timer_seconds"] = self.timer_seconds
+        results["notes"] = self._notes
         self._web.setHtml(build_results_html(results))
         self._rebind_webchannel()
 
@@ -188,14 +197,18 @@ class ExamWindow(QMainWindow):
         dur     = fmt_duration(timer_s)
         dur_html = f'<span><b>Durée :</b> {dur}</span>' if dur else ""
 
+        def swatch(kind, color, label):
+            return (f'<button class="sw sw-{color}" data-kind="{kind}" data-color="{color}" '
+                    f'onclick="pickColor(\'{kind}\',\'{color}\')" title="{label}" aria-label="{label}"></button>')
+
         return f"""<!DOCTYPE html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
 <title>Exam — {name}</title>
-<style>{PAPER_CSS}{_EXAM_CSS}</style>
+<style>{PAPER_CSS}{NOTES_CSS}{_EXAM_CSS}</style>
 </head>
-<body>
+<body data-tool="pointer">
 
 <!-- TOPBAR -->
 <div id="topbar">
@@ -210,24 +223,41 @@ class ExamWindow(QMainWindow):
 <!-- MAIN -->
 <div id="main">
   <div id="left-panel" class="desk">
-    <div id="zoom-ctrl">
-      <button class="zoom-btn" onclick="zoomIn()" title="Zoom in" aria-label="Zoom in">+</button>
-      <button class="zoom-btn" onclick="zoomOut()" title="Zoom out" aria-label="Zoom out">&minus;</button>
+    <div id="tools" role="toolbar" aria-label="Booklet tools">
+      <div class="tgroup">
+        <button class="tool" data-tool="pointer" onclick="setTool('pointer', true)" title="Pointer (Esc)">{_ICONS["pointer"]}<span>Pointer</span></button>
+        <button class="tool" data-tool="hl" onclick="setTool('hl')" title="Highlighter (H)">{_ICONS["hl"]}<span>Highlight</span></button>
+        <span class="swatches">{swatch("hl", "yellow", "Yellow highlighter")}{swatch("hl", "green", "Green highlighter")}{swatch("hl", "pink", "Pink highlighter")}</span>
+        <button class="tool" data-tool="pen" onclick="setTool('pen')" title="Pen (P)">{_ICONS["pen"]}<span>Pen</span></button>
+        <span class="swatches">{swatch("pen", "blue", "Blue pen")}{swatch("pen", "red", "Red pen")}</span>
+        <button class="tool" data-tool="eraser" onclick="setTool('eraser')" title="Eraser (E)">{_ICONS["eraser"]}<span>Eraser</span></button>
+      </div>
+      <div class="tgroup">
+        <button class="tool" onclick="undo()" title="Undo (Ctrl Z)">{_ICONS["undo"]}<span>Undo</span></button>
+        <button class="tool" onclick="clearDrawings()" title="Remove all pen drawings">{_ICONS["clear"]}<span>Clear drawings</span></button>
+      </div>
+      <div class="tgroup zoom">
+        <button class="tool tool-sq" onclick="zoomOut()" title="Zoom out (Ctrl −)" aria-label="Zoom out">{_ICONS["minus"]}</button>
+        <button class="tool" id="zoom-pct" onclick="resetZoom()" title="Reset zoom (Ctrl 0)">100%</button>
+        <button class="tool tool-sq" onclick="zoomIn()" title="Zoom in (Ctrl +)" aria-label="Zoom in">{_ICONS["plus"]}</button>
+      </div>
     </div>
-    <article id="booklet" class="paper">
-      <header class="paper-head">
-        <div class="ph-row"><span><b>Module :</b> {name}</span><span><b>Date :</b> {today}</span></div>
-        <div class="ph-row"><span>{n} QCM</span>{dur_html}</div>
-      </header>
-      <div id="questions-container"></div>
-    </article>
+    <div id="booklet-sizer">
+      <article id="booklet" class="paper">
+        <header class="paper-head">
+          <div class="ph-row"><span><b>Module :</b> {name}</span><span><b>Date :</b> {today}</span></div>
+          <div class="ph-row"><span>{n} QCM</span>{dur_html}</div>
+        </header>
+        <div id="questions-container"></div>
+        <svg id="ink-layer" class="ink-layer" style="width:100%;height:100%"></svg>
+      </article>
+    </div>
   </div>
   <div id="right-panel" class="desk">
     <section id="sheet" class="paper" aria-label="Answer sheet">
       <div class="sheet-head">
         <div class="sheet-fields">
           {comb_field("Module", self.exam_name.upper(), 18)}
-          {comb_date("Date", today)}
         </div>
         <div class="sheet-rules">
           <b>Consignes</b>
@@ -243,11 +273,11 @@ class ExamWindow(QMainWindow):
 <!-- Custom confirm modal -->
 <div id="modal-overlay" style="display:none;">
   <div id="modal-box" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-    <div id="modal-title">Submit your paper?</div>
+    <div id="modal-title"></div>
     <div id="modal-msg"></div>
     <div id="modal-btns">
-      <button id="modal-cancel" onclick="modalCancel()">Keep answering</button>
-      <button id="modal-ok"     onclick="modalOk()">Submit anyway</button>
+      <button id="modal-cancel" onclick="modalCancel()"></button>
+      <button id="modal-ok"     onclick="modalOk()"></button>
     </div>
   </div>
 </div>
@@ -265,7 +295,6 @@ let pybridge      = null;
 let answers       = {{}};
 let timerLeft     = TIMER_SECONDS;
 let timerInterval = null;
-let fontSize      = 15;
 let _modalResolve = null;
 
 new QWebChannel(qt.webChannelTransport, ch => {{
@@ -277,16 +306,17 @@ function renderQuestions() {{
   const c = document.getElementById("questions-container");
   QUESTIONS.forEach((q, i) => {{
     const block = document.createElement("div");
-    block.className = "q-block";
-    block.id        = "qblock-" + i;
+    block.className  = "q-block";
+    block.id         = "qblock-" + i;
+    block.dataset.qi = i;
     let opts = "";
     for (const [l, t] of Object.entries(q.options))
-      opts += `<div class="q-opt"><span class="opt-letter">${{l}}:</span><span class="opt-text">${{t}}</span></div>`;
+      opts += `<div class="q-opt"><span class="opt-letter">${{l}}:</span><span class="opt-text" data-part="${{l}}">${{t}}</span></div>`;
     const src = q.source ? `<div class="q-source">Source : ${{q.source}}</div>` : "";
     block.innerHTML = `
       <div class="q-header">
         <span class="q-num">${{i+1}}</span>
-        <span class="q-text">${{q.question}}</span>
+        <span class="q-text" data-part="Q">${{q.question}}</span>
       </div>
       <div class="q-opts">${{opts}}</div>${{src}}`;
     c.appendChild(block);
@@ -294,6 +324,8 @@ function renderQuestions() {{
 }}
 
 /* ── Answer sheet: blocks of 10, first half down the left column ────────── */
+const TICK = '<svg class="tick" viewBox="0 0 12 12" aria-hidden="true"><path d="M2 6.6l2.6 2.6L10 3.2"/></svg>';
+
 function renderGrid() {{
   const ALL  = ["A","B","C","D","E"];
   const used = new Set();
@@ -310,13 +342,13 @@ function renderGrid() {{
     let rows = "";
     for (let i = b * 10; i < Math.min(N, b * 10 + 10); i++) {{
       const q = QUESTIONS[i];
-      let cells = `<th class="qlabel" scope="row" onclick="scrollToQ(${{i}})" title="Go to question ${{i+1}}">Q${{i+1}}</th>`;
+      let cells = `<th class="qlabel" scope="row" onclick="scrollToQ(${{i}})" title="Go to question ${{i+1}}">${{TICK}}Q${{i+1}}</th>`;
       cols.forEach(l => {{
         cells += q.options[l] !== undefined
           ? `<td><span class="box" id="b-${{i}}-${{l}}" role="checkbox" aria-checked="false" aria-label="Q${{i+1}} ${{l}}" tabindex="0" onclick="toggle(${{i}},'${{l}}')" onkeydown="boxKey(event,${{i}},'${{l}}')"></span></td>`
           : `<td><span class="box box-na" aria-hidden="true"></span></td>`;
       }});
-      rows += `<tr>${{cells}}</tr>`;
+      rows += `<tr id="grow-${{i}}">${{cells}}</tr>`;
     }}
     const head = "<tr><th></th>" + cols.map(l => `<th scope="col">${{l}}</th>`).join("") + "</tr>";
     const table = document.createElement("table");
@@ -339,6 +371,7 @@ function toggle(qi, l) {{
     el.firstChild.style.transform = `rotate(${{((qi * 7 + l.charCodeAt(0) * 3) % 11) - 5}}deg) scale(1.12)`;
   }}
   el.setAttribute("aria-checked", s.has(l) ? "true" : "false");
+  document.getElementById("grow-" + qi).classList.toggle("row-done", s.size > 0);
   document.getElementById("ans-count").textContent =
     Object.values(answers).filter(s=>s&&s.size>0).length;
 }}
@@ -354,13 +387,6 @@ function scrollToQ(i) {{
   el.classList.remove("q-target");
   void el.offsetWidth;
   el.classList.add("q-target");
-}}
-
-/* ── Zoom ───────────────────────────────────────────────────────────────── */
-function zoomIn()  {{ fontSize = Math.min(fontSize + 2, 27); applyZoom(); }}
-function zoomOut() {{ fontSize = Math.max(fontSize - 2, 11); applyZoom(); }}
-function applyZoom() {{
-  document.getElementById("booklet").style.fontSize = fontSize + "px";
 }}
 
 /* ── Timer ──────────────────────────────────────────────────────────────── */
@@ -381,14 +407,18 @@ function renderTimer() {{
 }}
 
 /* ── Custom confirm modal ───────────────────────────────────────────────── */
-function showModal(msg) {{
+function showModal(title, msg, okLabel, cancelLabel) {{
   return new Promise(resolve => {{
     _modalResolve = resolve;
-    document.getElementById("modal-msg").textContent = msg;
+    document.getElementById("modal-title").textContent  = title;
+    document.getElementById("modal-msg").textContent    = msg;
+    document.getElementById("modal-ok").textContent     = okLabel;
+    document.getElementById("modal-cancel").textContent = cancelLabel;
     document.getElementById("modal-overlay").style.display = "flex";
     document.getElementById("modal-cancel").focus();
   }});
 }}
+function modalOpen()   {{ return document.getElementById("modal-overlay").style.display !== "none"; }}
 function modalOk()     {{ document.getElementById("modal-overlay").style.display="none"; if(_modalResolve) _modalResolve(true);  }}
 function modalCancel() {{ document.getElementById("modal-overlay").style.display="none"; if(_modalResolve) _modalResolve(false); }}
 
@@ -396,7 +426,9 @@ async function askSubmit() {{
   const done      = Object.values(answers).filter(s=>s&&s.size>0).length;
   const remaining = N - done;
   if (remaining > 0) {{
-    const ok = await showModal(`${{remaining}} question(s) still have no answer marked on the sheet.`);
+    const ok = await showModal("Submit your paper?",
+      `${{remaining}} question(s) still have no answer marked on the sheet.`,
+      "Submit anyway", "Keep answering");
     if (!ok) return;
   }}
   doSubmit();
@@ -411,15 +443,271 @@ function doSubmit() {{
   }});
   document.getElementById("submit-btn").disabled    = true;
   document.getElementById("submit-btn").textContent = "Grading…";
-  if (pybridge) pybridge.submitExam(JSON.stringify(payload));
+  if (pybridge) {{
+    pybridge.saveNotes(JSON.stringify(notesPayload()));
+    pybridge.submitExam(JSON.stringify(payload));
+  }}
 }}
-
+</script>
+<script>{NOTES_JS}{_TOOLS_JS}</script>
+<script>
 renderQuestions();
 renderGrid();
+initTools();
 startTimer();
 </script>
 </body>
 </html>"""
+
+
+# ── Toolbar icons: one 16px, 1.6 stroke family ───────────────────────────────
+
+def _icon(d: str) -> str:
+    return (f'<svg class="ic" viewBox="0 0 16 16" aria-hidden="true"><path d="{d}"/></svg>')
+
+
+_ICONS = {
+    "pointer": _icon("M4 2.5v10l2.8-2.6 1.9 4.1 1.7-.8-1.9-4h3.8z"),
+    "hl":      _icon("M9.8 2.6l3.6 3.6-5.6 5.6H4.2V8.2zM2.5 14h7"),
+    "pen":     _icon("M11.2 2.6l2.2 2.2-7.6 7.6-3 .8.8-3zM9.6 4.2l2.2 2.2"),
+    "eraser":  _icon("M6.2 13.2L2.8 9.8l6.6-6.6 4.4 4.4-6 5.6M6.2 13.2h7.3M5.4 7.2l4.4 4.4"),
+    "undo":    _icon("M5.5 6.5h5a3 3 0 010 6H7.5M5.5 6.5L8 4M5.5 6.5L8 9"),
+    "clear":   _icon("M3 4.6h10M6.2 4.6V3h3.6v1.6M4.4 4.6l.7 8.6h5.8l.7-8.6"),
+    "minus":   _icon("M4 8h8"),
+    "plus":    _icon("M4 8h8M8 4v8"),
+}
+
+
+# ── Booklet tools: highlighter, pen, eraser, undo, zoom (plain string) ───────
+
+_TOOLS_JS = r"""
+let tool = "pointer", hlColor = "yellow", penColor = "blue";
+let highlights = [], strokes = [], undoStack = [], nextId = 1;
+const ZOOMS = [0.7, 0.8, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
+let zoomIdx = 3;
+
+const booklet = () => document.getElementById("booklet");
+const layer   = () => document.getElementById("ink-layer");
+
+function setTool(t, force) {
+  if (!force && t === tool) t = "pointer";   // clicking the active tool puts it down
+  tool = t;
+  document.body.dataset.tool = t;
+  document.body.dataset.hl = hlColor;
+  document.querySelectorAll(".tool[data-tool]").forEach(b => {
+    const on = b.dataset.tool === t;
+    b.classList.toggle("active", on);
+    b.setAttribute("aria-pressed", String(on));
+  });
+  document.querySelectorAll(".sw").forEach(b => {
+    const cur = b.dataset.kind === "hl" ? hlColor : penColor;
+    b.classList.toggle("picked", b.dataset.color === cur);
+  });
+  if (t !== "hl") window.getSelection().removeAllRanges();
+}
+
+function pickColor(kind, color) {
+  if (kind === "hl") hlColor = color; else penColor = color;
+  setTool(kind, true);
+}
+
+function notesPayload() {
+  return {highlights: highlights, strokes: strokes};
+}
+
+function undo() {
+  const fn = undoStack.pop();
+  if (fn) fn();
+}
+
+/* Highlighter */
+function repaint(list) {
+  const seen = new Set();
+  list.forEach(h => {
+    const key = h.q + ":" + h.part;
+    if (seen.has(key)) return;
+    seen.add(key);
+    const el = document.querySelector(`#qblock-${h.q} [data-part="${h.part}"]`);
+    if (el) paintHighlights(el, highlights.filter(x => x.q === h.q && x.part === h.part));
+  });
+}
+
+function onHighlightUp() {
+  if (tool !== "hl") return;
+  const sel = window.getSelection();
+  if (!sel.rangeCount || sel.isCollapsed) return;
+  const range = sel.getRangeAt(0);
+  const added = [];
+  booklet().querySelectorAll("[data-part]").forEach(el => {
+    if (!range.intersectsNode(el)) return;
+    const start = el.contains(range.startContainer) ? textOffset(el, range.startContainer, range.startOffset) : 0;
+    const end   = el.contains(range.endContainer)   ? textOffset(el, range.endContainer, range.endOffset) : el.textContent.length;
+    if (end > start)
+      added.push({id: nextId++, q: +el.closest("[data-qi]").dataset.qi, part: el.dataset.part, start, end, color: hlColor});
+  });
+  sel.removeAllRanges();
+  if (!added.length) return;
+  highlights.push(...added);
+  repaint(added);
+  undoStack.push(() => { highlights = highlights.filter(h => !added.includes(h)); repaint(added); });
+}
+
+function onHighlightClick(e) {
+  if (tool !== "hl" || !window.getSelection().isCollapsed) return;
+  const m = e.target.closest("mark.hl");
+  if (!m) return;
+  const h = highlights.find(x => x.id === +m.dataset.hid);
+  if (!h) return;
+  highlights = highlights.filter(x => x !== h);
+  repaint([h]);
+  undoStack.push(() => { highlights.push(h); repaint([h]); });
+}
+
+/* Pen + eraser: strokes are stored relative to their question block so the
+   results page can redraw them on the same words. */
+function toLocal(e) {
+  const pt = layer().createSVGPoint();
+  pt.x = e.clientX; pt.y = e.clientY;
+  const p = pt.matrixTransform(layer().getScreenCTM().inverse());
+  return [Math.round(p.x * 10) / 10, Math.round(p.y * 10) / 10];
+}
+
+function blockAt(y) {
+  const blocks = document.querySelectorAll(".q-block");
+  let b = blocks[0];
+  blocks.forEach(el => { if (el.offsetTop <= y) b = el; });
+  return b;
+}
+
+function absPoints(s) {
+  const b = document.getElementById("qblock-" + s.q);
+  return s.pts.map(([x, y]) => [x + b.offsetLeft, y + b.offsetTop]);
+}
+
+function drawStroke(s) {
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("class", "ink-" + s.color);
+  path.setAttribute("d", inkPath(absPoints(s)));
+  path.dataset.sid = s.id;
+  layer().appendChild(path);
+}
+
+function removeStroke(s) {
+  strokes = strokes.filter(x => x !== s);
+  const el = layer().querySelector(`[data-sid="${s.id}"]`);
+  if (el) el.remove();
+}
+
+let live = null;
+
+function eraseAt(p) {
+  strokes.filter(s => absPoints(s).some(([x, y]) => Math.hypot(x - p[0], y - p[1]) < 8))
+    .forEach(s => {
+      removeStroke(s);
+      undoStack.push(() => { strokes.push(s); drawStroke(s); });
+    });
+}
+
+function onInkDown(e) {
+  if (tool !== "pen" && tool !== "eraser") return;
+  e.preventDefault();
+  layer().setPointerCapture(e.pointerId);
+  const p = toLocal(e);
+  if (tool === "eraser") { live = {erasing: true}; eraseAt(p); return; }
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("class", "ink-" + penColor);
+  layer().appendChild(path);
+  live = {pts: [p], path: path, color: penColor};
+  path.setAttribute("d", inkPath(live.pts));
+}
+
+function onInkMove(e) {
+  if (!live) return;
+  const p = toLocal(e);
+  if (live.erasing) { eraseAt(p); return; }
+  const last = live.pts[live.pts.length - 1];
+  if (Math.hypot(p[0] - last[0], p[1] - last[1]) < 1.2) return;
+  live.pts.push(p);
+  live.path.setAttribute("d", inkPath(live.pts));
+}
+
+function onInkUp() {
+  if (!live) return;
+  const done = live;
+  live = null;
+  if (done.erasing) return;
+  const b = blockAt(done.pts[0][1]);
+  const s = {
+    id: nextId++, q: +b.dataset.qi, color: done.color,
+    pts: done.pts.map(([x, y]) => [Math.round((x - b.offsetLeft) * 10) / 10, Math.round((y - b.offsetTop) * 10) / 10]),
+  };
+  done.path.dataset.sid = s.id;
+  strokes.push(s);
+  undoStack.push(() => removeStroke(s));
+}
+
+async function clearDrawings() {
+  if (!strokes.length) return;
+  const ok = await showModal("Clear all drawings?",
+    "This removes every pen stroke on the booklet. Your highlights stay.",
+    "Clear drawings", "Cancel");
+  if (!ok) return;
+  const removed = strokes.slice();
+  removed.forEach(removeStroke);
+  undoStack.push(() => removed.forEach(s => { strokes.push(s); drawStroke(s); }));
+}
+
+/* Zoom: magnify the whole booklet (no re-wrapping, drawings stay put) */
+function applyZoom() {
+  const z = ZOOMS[zoomIdx];
+  const panel = document.getElementById("left-panel");
+  const ratio = panel.scrollTop / Math.max(1, panel.scrollHeight);
+  const bk = booklet();
+  bk.style.transform = `scale(${z})`;
+  const sizer = document.getElementById("booklet-sizer");
+  sizer.style.width  = (bk.offsetWidth * z) + "px";
+  sizer.style.height = (bk.offsetHeight * z) + "px";
+  document.getElementById("sheet").style.zoom = Math.min(z, 1.5);
+  document.getElementById("zoom-pct").textContent = Math.round(z * 100) + "%";
+  panel.scrollTop = ratio * panel.scrollHeight;
+}
+function zoomIn()    { zoomIdx = Math.min(zoomIdx + 1, ZOOMS.length - 1); applyZoom(); }
+function zoomOut()   { zoomIdx = Math.max(zoomIdx - 1, 0); applyZoom(); }
+function resetZoom() { zoomIdx = 3; applyZoom(); }
+
+function onKey(e) {
+  if (modalOpen()) { if (e.key === "Escape") modalCancel(); return; }
+  if (e.target.closest("input, textarea, select")) return;
+  if (e.ctrlKey || e.metaKey) {
+    const k = e.key.toLowerCase();
+    if (k === "z")                  { e.preventDefault(); undo(); }
+    else if (k === "+" || k === "=") { e.preventDefault(); zoomIn(); }
+    else if (k === "-")             { e.preventDefault(); zoomOut(); }
+    else if (k === "0")             { e.preventDefault(); resetZoom(); }
+    return;
+  }
+  if (e.altKey) return;
+  const k = e.key.toLowerCase();
+  if (k === "h") setTool("hl");
+  else if (k === "p") setTool("pen");
+  else if (k === "e") setTool("eraser");
+  else if (e.key === "Escape") setTool("pointer", true);
+}
+
+function initTools() {
+  const bk = booklet();
+  bk.addEventListener("mouseup", onHighlightUp);
+  bk.addEventListener("click", onHighlightClick);
+  const ly = layer();
+  ly.addEventListener("pointerdown", onInkDown);
+  ly.addEventListener("pointermove", onInkMove);
+  ly.addEventListener("pointerup", onInkUp);
+  ly.addEventListener("pointercancel", onInkUp);
+  document.addEventListener("keydown", onKey);
+  setTool("pointer", true);
+  applyZoom();
+}
+"""
 
 
 # ── CSS (plain string — no f-string, single braces are fine) ─────────────────
@@ -455,27 +743,58 @@ _EXAM_CSS = """
 #submit-btn:disabled { background: #64748b; cursor: default; }
 
 /* Booklet side */
-#left-panel { flex: 1; overflow-y: auto; position: relative; padding: 28px 32px 48px; }
+#left-panel { flex: 1; overflow: auto; position: relative; padding: 0 32px 48px; min-width: 0; }
+#booklet-sizer { margin: 0 auto; }
 #booklet {
-  max-width: 820px; margin: 0 auto;
+  position: relative; width: 820px; transform-origin: 0 0;
   padding: 52px 64px 64px; font-size: 15px;
 }
 
-/* Zoom widget */
-#zoom-ctrl {
-  position: sticky; top: 0; float: right; height: 0;
-  display: flex; flex-direction: column; gap: 4px; z-index: 20;
+/* Booklet tools */
+#tools {
+  position: sticky; top: 0; left: 0; z-index: 30;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px 18px;
+  margin: 0 -32px 20px; padding: 10px 16px;
+  background: var(--desk); border-bottom: 1px solid #bdbab2;
 }
-.zoom-btn {
-  width: 30px; height: 30px; border-radius: 4px;
-  background: #ecebe7; border: 1px solid #a9a69e; color: var(--desk-ink);
-  font: bold 17px/1 Arial, sans-serif; cursor: pointer;
+.tgroup { display: flex; align-items: center; gap: 4px; }
+.tool {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 10px;
+  background: #ecebe7; border: 1px solid #b9b6ae; border-radius: 4px; color: var(--desk-ink);
+  font: 13px Arial, sans-serif; cursor: pointer;
 }
-.zoom-btn:hover { background: #fff; }
+.tool:hover { background: #fff; }
+.tool.active { background: var(--print); border-color: var(--print); color: #fff; }
+.tool-sq { width: 32px; padding: 0; justify-content: center; }
+#zoom-pct { min-width: 58px; justify-content: center; font-variant-numeric: tabular-nums; }
+.ic { width: 16px; height: 16px; flex-shrink: 0; }
+.ic path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.swatches { display: inline-flex; gap: 3px; margin: 0 8px 0 2px; }
+.sw {
+  width: 20px; height: 20px; border-radius: 50%; border: 1px solid rgba(0,0,0,.25);
+  cursor: pointer; padding: 0;
+}
+.sw.picked { box-shadow: 0 0 0 2px var(--desk), 0 0 0 4px var(--desk-ink); }
+.sw-yellow { background: #fff27a; }
+.sw-green  { background: #b4f0c4; }
+.sw-pink   { background: #ffc4e1; }
+.sw-blue   { background: #1f3a93; }
+.sw-red    { background: #d0302a; }
+
+/* Tool modes */
+body[data-tool="hl"] #booklet { cursor: text; }
+body[data-tool="hl"][data-hl="yellow"] #booklet ::selection { background: #fff27a; }
+body[data-tool="hl"][data-hl="green"]  #booklet ::selection { background: #b4f0c4; }
+body[data-tool="hl"][data-hl="pink"]   #booklet ::selection { background: #ffc4e1; }
+body[data-tool="hl"] mark.hl { cursor: pointer; }
+body[data-tool="pen"] #ink-layer,
+body[data-tool="eraser"] #ink-layer { pointer-events: all; cursor: crosshair; touch-action: none; }
+body[data-tool="eraser"] #ink-layer { cursor: cell; }
+#ink-layer { z-index: 5; }
 
 /* Answer sheet side */
-#right-panel { flex: 0 0 412px; overflow-y: auto; padding: 28px 22px 48px 0; }
-#sheet { padding: 22px 20px 36px; min-height: 100%; }
+#right-panel { flex: 0 0 auto; overflow: auto; padding: 72px 22px 48px 0; }
+#sheet { width: 432px; padding: 22px 20px 36px; }
 .sheet-head { border-bottom: 1.5px solid var(--rule); padding-bottom: 12px; margin-bottom: 24px; }
 .sheet-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .comb { display: flex; align-items: center; gap: 8px; }
@@ -486,7 +805,6 @@ _EXAM_CSS = """
   display: inline-flex; align-items: center; justify-content: center;
   font: bold 11px/1 Arial, sans-serif; color: var(--pen);
 }
-.cell-sep { padding: 0 4px; font-size: 12px; color: var(--print-soft); }
 .sheet-rules {
   border: 1px solid #6b6b6b; padding: 8px 10px;
   font-size: 12px; line-height: 1.45; color: #333;
@@ -505,17 +823,21 @@ _EXAM_CSS = """
 .block tbody tr:first-child td, .block tbody tr:first-child th { padding-top: 6px; }
 .block tbody tr:last-child td, .block tbody tr:last-child th { padding-bottom: 6px; }
 .qlabel {
-  padding: 3px 6px 3px 6px; text-align: left; font-weight: normal;
+  padding: 3px 6px 3px 4px; text-align: left; font-weight: normal;
   white-space: nowrap; cursor: pointer; font-variant-numeric: tabular-nums;
 }
 .qlabel:hover { text-decoration: underline; text-underline-offset: 2px; }
+.tick { width: 11px; height: 11px; margin-right: 3px; vertical-align: -1px; visibility: hidden; }
+.tick path { fill: none; stroke: #6f6f6f; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.row-done .tick { visibility: visible; }
 .box {
-  width: 17px; height: 17px; border: 1.4px solid var(--rule); background: var(--paper);
+  width: 22px; height: 22px; border: 1.4px solid var(--rule); background: var(--paper);
   display: inline-flex; vertical-align: middle; cursor: pointer; padding: 0;
 }
 .box:hover { background: #eef1fb; }
 .box-na { border-color: #c4c4c4; background: #f2f2f2; cursor: default; }
 .box-na:hover { background: #f2f2f2; }
+.sheet-rules .box { width: 18px; height: 18px; cursor: default; }
 
 /* Custom confirm modal */
 #modal-overlay {

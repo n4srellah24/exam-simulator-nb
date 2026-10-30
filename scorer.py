@@ -5,7 +5,9 @@ Scoring engine + results HTML builder.
 import html
 from datetime import date
 
-from .paper import PAPER_CSS, PEN_SVG, fmt_duration, mark_svg
+import json
+
+from .paper import NOTES_CSS, NOTES_JS, PAPER_CSS, PEN_SVG, fmt_duration, mark_svg
 
 # ── Flag definitions ──────────────────────────────────────────────────────────
 FLAG_COLORS = {
@@ -136,7 +138,7 @@ STATUS_LABELS = {
 
 
 def _option_html(letter, text, is_correct, is_chosen):
-    classes = ["r-opt"]
+    classes = ["q-opt"]
     if is_correct:
         classes.append("key")
     if is_chosen:
@@ -154,7 +156,7 @@ def _option_html(letter, text, is_correct, is_chosen):
         f'<div class="{" ".join(classes)}">'
         f'<span class="ink">{ink}</span>'
         f'<span class="opt-letter"><span class="lt">{letter}</span>:</span>'
-        f'<span class="opt-text">{text}</span>{sr}'
+        f'<span class="opt-text" data-part="{letter}">{text}</span>{sr}'
         f'</div>'
     )
 
@@ -207,7 +209,7 @@ def build_results_html(results):
 
         label = STATUS_LABELS.get(status, "Skipped")
         q_blocks += (
-            f'<div class="r-q" id="qrow-{r["index"]}" data-status="{status}" '
+            f'<div class="r-q" id="qrow-{r["index"]}" data-qi="{r["index"]}" data-status="{status}" '
             f'onclick="toggleRowSelection(event, {r["index"]})">'
             f'<label class="sel" title="Select question {num}">'
             f'<input type="checkbox" class="q-check" data-nid="{r.get("nid", "")}" '
@@ -215,8 +217,9 @@ def build_results_html(results):
             f'</label>'
             f'<div class="r-body">'
             f'<div class="q-header"><span class="q-num">{num}</span>'
-            f'<span class="q-text">{r["question"]}</span></div>'
+            f'<span class="q-text" data-part="Q">{r["question"]}</span></div>'
             f'<div class="q-opts">{opts_html}</div>{src_html}{expl_html}'
+            f'<svg class="ink-layer" width="1" height="1"></svg>'
             f'</div>'
             f'<div class="r-mark" title="{label}">'
             f'{mark_svg(status)}'
@@ -240,6 +243,14 @@ def build_results_html(results):
     ) + '}'
 
     n_q = len(results["questions"])
+    notes = results.get("notes") or {}
+    has_notes = bool(notes.get("highlights") or notes.get("strokes"))
+    notes_json = json.dumps(notes, ensure_ascii=False).replace("</", "<\\/")
+    notes_btn = (
+        '<button id="notes-toggle" class="filt active" aria-pressed="true" '
+        'onclick="toggleNotes()" title="Show or hide your highlights and drawings">'
+        '<span>Show my notes</span></button>'
+    ) if has_notes else ""
 
     def filter_btn(status, count, active=False):
         icon = "" if status == "all" else mark_svg(status)
@@ -261,6 +272,9 @@ def build_results_html(results):
 <title>Results — {exam_name}</title>
 <style>
 {PAPER_CSS}
+{NOTES_CSS}
+body.notes-off mark.hl {{ background: transparent; }}
+body.notes-off .r-body .ink-layer {{ display: none; }}
 
 #topbar {{
   display: flex; justify-content: space-between; align-items: center; gap: 20px;
@@ -308,8 +322,8 @@ def build_results_html(results):
 #action-feedback {{ font-size: 12px; color: #1f6b33; font-weight: bold; }}
 
 #results-scroll {{ flex: 1; overflow-y: auto; padding: 28px 32px 56px; }}
-#corrected {{ max-width: 900px; margin: 0 auto; padding: 48px 56px 64px 40px; font-size: 15px; }}
-#corrected .paper-head {{ margin-left: 30px; }}
+#corrected {{ width: 890px; margin: 0 auto; padding: 48px 32px 64px; font-size: 15px; }}
+#corrected .paper-head, #corrected .legend {{ margin-left: 60px; margin-right: 74px; }}
 .head-grid {{ display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; }}
 .head-info {{ flex: 1; }}
 .note-box {{
@@ -321,7 +335,7 @@ def build_results_html(results):
 .note-val small {{ font-size: 15px; }}
 .note-sub {{ font-size: 12px; font-variant-numeric: tabular-nums; }}
 .legend {{
-  display: flex; flex-wrap: wrap; gap: 6px 22px; margin: -12px 0 26px 30px;
+  display: flex; flex-wrap: wrap; gap: 6px 22px; margin-top: -12px; margin-bottom: 26px;
   font-size: 12px; color: var(--print-soft);
 }}
 .legend span {{ display: inline-flex; align-items: center; gap: 6px; }}
@@ -331,26 +345,25 @@ def build_results_html(results):
 .legend .lg-bad {{ text-decoration: line-through; text-decoration-color: var(--red-pen); text-decoration-thickness: 2px; color: var(--print); }}
 
 .r-q {{
-  display: grid; grid-template-columns: 30px 1fr 74px; align-items: start;
-  margin-bottom: 1.1em; padding: .35em 0; border-radius: 3px; cursor: pointer;
+  display: grid; grid-template-columns: 60px 692px 74px; align-items: start;
+  margin-bottom: 1.35em; border-radius: 3px; cursor: pointer;
 }}
 .r-q:hover {{ background: #fafaf7; }}
 .r-q.row-selected {{ background: #eef2fc; }}
 .r-q.row-hidden {{ display: none; }}
-.sel {{ display: flex; justify-content: center; padding-top: .2em; cursor: pointer; }}
+.sel {{ display: flex; padding: .2em 0 0 6px; cursor: pointer; }}
 .q-check {{ width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }}
-.r-opt {{ display: flex; align-items: baseline; gap: .4em; line-height: 1.5; }}
-.r-opt .ink {{ width: 1em; height: 1em; flex-shrink: 0; align-self: center; margin-left: -1.4em; }}
-.r-body {{ padding-left: 1.4em; min-width: 0; }}
-.r-body .q-header {{ margin-left: -1.4em; padding-left: 1.4em; }}
-.r-opt .opt-letter {{ min-width: 1.2em; }}
-.r-opt .lt {{ position: relative; }}
-.r-opt.key .lt::before {{
+.r-body {{ position: relative; }}
+.r-body .ink-layer {{ z-index: 2; }}
+.q-opt {{ position: relative; }}
+.q-opt .ink {{ position: absolute; left: -1.5em; top: .25em; width: 1em; height: 1em; }}
+.q-opt .lt {{ position: relative; }}
+.q-opt.key .lt::before {{
   content: ""; position: absolute; left: 50%; top: 52%; width: 1.5em; height: 1.4em;
   border: 1.6px solid var(--red-pen); border-radius: 50%;
   transform: translate(-50%, -50%) rotate(-8deg);
 }}
-.r-opt.bad .opt-text {{
+.q-opt.bad .opt-text {{
   text-decoration: line-through; text-decoration-color: var(--red-pen); text-decoration-thickness: 2px;
 }}
 .r-mark {{ display: flex; flex-direction: column; align-items: center; gap: 2px; padding-top: .1em; }}
@@ -384,6 +397,7 @@ def build_results_html(results):
 
 <div id="toolbar">
   <div class="tool-group" role="group" aria-label="Show">{filters}</div>
+  {notes_btn}
   <div class="tool-group">
     <span id="sel-count">0 selected</span>
     <button class="act-btn" onclick="selectAll()">Select all</button>
@@ -425,7 +439,9 @@ def build_results_html(results):
 </div>
 
 <script src="qrc:///qtwebchannel/qwebchannel.js"></script>
+<script>{NOTES_JS}</script>
 <script>
+var NOTES = {notes_json};
 var pybridge = null;
 var FLAG_SVGS = {flag_svg_map};
 var currentFilter = 'all';
@@ -433,6 +449,32 @@ var currentFilter = 'all';
 new QWebChannel(qt.webChannelTransport, function(ch) {{
   pybridge = ch.objects.pybridge;
 }});
+
+function renderNotes() {{
+  var hl = NOTES.highlights || [];
+  var groups = {{}};
+  hl.forEach(function(h) {{ (groups[h.q + ':' + h.part] = groups[h.q + ':' + h.part] || []).push(h); }});
+  Object.keys(groups).forEach(function(key) {{
+    var h = groups[key][0];
+    var el = document.querySelector('#qrow-' + h.q + ' [data-part="' + h.part + '"]');
+    if (el) paintHighlights(el, groups[key]);
+  }});
+  (NOTES.strokes || []).forEach(function(s) {{
+    var svg = document.querySelector('#qrow-' + s.q + ' .ink-layer');
+    if (!svg) return;
+    var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('class', 'ink-' + s.color);
+    path.setAttribute('d', inkPath(s.pts));
+    svg.appendChild(path);
+  }});
+}}
+
+function toggleNotes() {{
+  var off = document.body.classList.toggle('notes-off');
+  var btn = document.getElementById('notes-toggle');
+  btn.classList.toggle('active', !off);
+  btn.setAttribute('aria-pressed', String(!off));
+}}
 
 function finishExam() {{ if (pybridge) pybridge.closeExam(); }}
 function takeAnotherExam() {{ if (pybridge) pybridge.takeAnotherExam(); }}
@@ -525,6 +567,8 @@ function applyTag() {{
     showFeedback('Tagged ' + nids.length + ' card(s): ' + tag);
   }}
 }}
+
+renderNotes();
 </script>
 </body>
 </html>"""

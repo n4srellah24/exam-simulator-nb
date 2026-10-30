@@ -43,15 +43,6 @@ def comb_field(label: str, text: str, cells: int) -> str:
             f'<span class="cells">{boxes}</span></div>')
 
 
-def comb_date(label: str, dmy: str) -> str:
-    groups = []
-    for part in dmy.split("/"):
-        groups.append("".join(f'<span class="cell">{c}</span>' for c in part))
-    sep = '<span class="cell-sep">/</span>'
-    return (f'<div class="comb"><span class="comb-label">{label}</span>'
-            f'<span class="cells">{sep.join(groups)}</span></div>')
-
-
 # The printed-paper world: shared by the exam and the corrected booklet.
 PAPER_CSS = """
 :root {
@@ -119,3 +110,70 @@ body {
 .pen { width: 100%; height: 100%; display: block; overflow: visible; transform-origin: 50% 50%; }
 .pen path { fill: none; stroke: var(--pen); stroke-width: 2.6; stroke-linecap: round; }
 """
+
+
+# ── Student notes: highlights + pen strokes, shared by exam and results ───────
+
+NOTES_CSS = """
+mark.hl { color: inherit; border-radius: 2px; padding: .05em 0; }
+.hl-yellow { background: #fff27a; }
+.hl-green  { background: #b4f0c4; }
+.hl-pink   { background: #ffc4e1; }
+.ink-layer { position: absolute; left: 0; top: 0; overflow: visible; pointer-events: none; }
+.ink-layer path { fill: none; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; }
+.ink-blue { stroke: #1f3a93; }
+.ink-red  { stroke: #d0302a; }
+"""
+
+# Plain string (not an f-string), injected into both pages.
+NOTES_JS = r"""
+const _origHtml = new WeakMap();
+
+// Character offset of a DOM boundary inside el's text.
+function textOffset(el, node, off) {
+  const r = document.createRange();
+  r.selectNodeContents(el);
+  r.setEnd(node, off);
+  return r.toString().length;
+}
+
+// Re-render el with the given highlights wrapped in <mark>.
+function paintHighlights(el, list) {
+  if (!_origHtml.has(el)) _origHtml.set(el, el.innerHTML);
+  el.innerHTML = _origHtml.get(el);
+  list.forEach(h => {
+    const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    let pos = 0, n;
+    while ((n = walker.nextNode())) {
+      const len = n.data.length, a = Math.max(h.start, pos), b = Math.min(h.end, pos + len);
+      if (b > a) hits.push([n, a - pos, b - pos]);
+      pos += len;
+    }
+    hits.forEach(([node, a, b]) => {
+      let mid = node;
+      if (a > 0) mid = node.splitText(a);
+      if (b - a < mid.data.length) mid.splitText(b - a);
+      const m = document.createElement("mark");
+      m.className = "hl hl-" + h.color;
+      m.dataset.hid = h.id;
+      mid.parentNode.insertBefore(m, mid);
+      m.appendChild(mid);
+    });
+  });
+}
+
+// Smooth path through the points (quadratic curves via midpoints).
+function inkPath(pts) {
+  if (!pts.length) return "";
+  if (pts.length === 1) return `M${pts[0][0]} ${pts[0][1]}h.1`;
+  let d = `M${pts[0][0]} ${pts[0][1]}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const mx = (pts[i][0] + pts[i+1][0]) / 2, my = (pts[i][1] + pts[i+1][1]) / 2;
+    d += `Q${pts[i][0]} ${pts[i][1]} ${mx.toFixed(1)} ${my.toFixed(1)}`;
+  }
+  const last = pts[pts.length - 1];
+  return d + `L${last[0]} ${last[1]}`;
+}
+"""
+
