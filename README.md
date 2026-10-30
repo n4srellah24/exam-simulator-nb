@@ -39,7 +39,7 @@ Exam Simulator - NB lets you:
 ![Highlights in three colours and pen marks on the booklet](screenshots/exam-notes.png)
 
 ### Results: the Corrected Booklet
-![Corrected booklet with the mark out of 20, red-pen corrections and your notes](screenshots/results.png)
+![Corrected booklet with the mark out of 20, red-pen corrections and your notes](screenshots/corrected-booklet.png)
 
 ## Main Features
 
