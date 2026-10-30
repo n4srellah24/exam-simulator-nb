@@ -793,7 +793,12 @@ body[data-tool="eraser"] #ink-layer { cursor: cell; }
 #ink-layer { z-index: 5; }
 
 /* Answer sheet side */
-#right-panel { flex: 0 0 auto; overflow: auto; padding: 72px 22px 48px 0; }
+/* A strip of desk and a rule always separate the sheet from the booklet,
+   even when the zoomed booklet is wider than its panel. */
+#right-panel {
+  flex: 0 0 auto; overflow: auto; padding: 72px 22px 48px 24px;
+  border-left: 1px solid #a9a69e;
+}
 #sheet { width: 432px; padding: 22px 20px 36px; }
 .sheet-head { border-bottom: 1.5px solid var(--rule); padding-bottom: 12px; margin-bottom: 24px; }
 .sheet-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
